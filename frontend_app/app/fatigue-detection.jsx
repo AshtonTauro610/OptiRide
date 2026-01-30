@@ -1,13 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { theme } from '@/constants/theme';
+import { useSensors } from '@/contexts/SensorContext';
 
 export default function FatigueDetectionScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
+  const { startMonitoring, isMonitoring } = useSensors();
   const [isPassed, setIsPassed] = useState(false);
+  const [isStartingSensors, setIsStartingSensors] = useState(false);
   const [progress] = useState(new Animated.Value(0));
   const [scanAnimation] = useState(new Animated.Value(0));
+  const hasStartedMonitoring = useRef(false);
+
+  const orderId = params.orderId;
 
   useEffect(() => {
     Animated.loop(
@@ -26,20 +33,41 @@ export default function FatigueDetectionScreen() {
     ).start();
 
     const timer = setTimeout(() => {
-      setIsPassed(true);
-      Animated.timing(progress, {
-        toValue: 1,
-        duration: 500,
-        useNativeDriver: false,
-      }).start();
-
-      setTimeout(() => {
-        router.replace('/order-pickup');
-      }, 2000);
+      handleFatigueCheckPassed();
     }, 3000);
 
     return () => clearTimeout(timer);
-  }, [progress, router, scanAnimation]);
+  }, [scanAnimation]);
+
+  const handleFatigueCheckPassed = async () => {
+    setIsPassed(true);
+    Animated.timing(progress, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: false,
+    }).start();
+
+    // Start sensor monitoring after fatigue check passes (only on mobile)
+    if (Platform.OS !== 'web' && !hasStartedMonitoring.current && !isMonitoring) {
+      hasStartedMonitoring.current = true;
+      setIsStartingSensors(true);
+      try {
+        await startMonitoring();
+        console.log('Safety monitoring started successfully');
+      } catch (error) {
+        console.warn('Failed to start safety monitoring:', error);
+      }
+      setIsStartingSensors(false);
+    }
+
+    // Navigate to order pickup after a short delay
+    setTimeout(() => {
+      router.replace({
+        pathname: '/order-pickup',
+        params: { orderId: orderId }
+      });
+    }, 2000);
+  };
 
   const scanTranslateY = scanAnimation.interpolate({
     inputRange: [0, 1],
@@ -49,17 +77,17 @@ export default function FatigueDetectionScreen() {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Fatigue Detection</Text>
-      
+
       <View style={styles.cameraFrame}>
         <View style={styles.circle}>
           {!isPassed ? (
             <>
               <View style={styles.face} />
-              <Animated.View 
+              <Animated.View
                 style={[
-                  styles.scanLine, 
+                  styles.scanLine,
                   { transform: [{ translateY: scanTranslateY }] }
-                ]} 
+                ]}
               />
             </>
           ) : (
@@ -71,7 +99,9 @@ export default function FatigueDetectionScreen() {
       </View>
 
       <Text style={styles.instruction}>
-        {isPassed ? 'Fatigue check passed' : 'Position your face in the frame'}
+        {isPassed
+          ? (isStartingSensors ? 'Starting safety monitoring...' : 'Fatigue check passed')
+          : 'Position your face in the frame'}
       </Text>
 
       {!isPassed && (
@@ -80,8 +110,10 @@ export default function FatigueDetectionScreen() {
         </View>
       )}
 
-      {isPassed && (
-        <Text style={styles.caption}>This scan ensures driver safety</Text>
+      {isPassed && !isStartingSensors && (
+        <Text style={styles.caption}>
+          Safety monitoring active • Proceeding to pickup
+        </Text>
       )}
     </View>
   );

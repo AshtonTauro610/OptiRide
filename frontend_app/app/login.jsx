@@ -34,8 +34,8 @@ export default function LoginScreen() {
       await login(email.trim(), password);
       router.replace('/(tabs)');
     } catch (err) {
-      console.error('Sign in failed', err);
-      Alert.alert('Sign in failed', 'Please check your credentials and try again.');
+      // Use the user-friendly error message from AuthContext
+      Alert.alert('Sign in failed', err.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -122,10 +122,7 @@ export default function LoginScreen() {
             </TouchableOpacity>
 
             <View style={styles.signUpRow}>
-              <Text style={styles.signUpText}>Don&apos;t have an account? </Text>
-              <TouchableOpacity onPress={() => router.push('/signup')}>
-                <Text style={styles.signUpLink}>Sign up</Text>
-              </TouchableOpacity>
+              <Text style={styles.signUpText}>Need an account? Contact your administrator</Text>
             </View>
           </View>
         </View>

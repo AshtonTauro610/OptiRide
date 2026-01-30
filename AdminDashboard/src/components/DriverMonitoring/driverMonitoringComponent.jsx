@@ -10,7 +10,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, } 
 import { DriverChatDialog } from "@/components/shared/DriverChatDialog";
 import { useDrivers, usePolling, useDriverPerformanceStats } from "@/utils/hooks/use-api";
 
-// Note: Some telemetry fields (speed, battery, network, camera) are currently hardcoded 
 
 const getStatusColor = (status) => {
   const s = status?.toUpperCase();
@@ -37,6 +36,16 @@ const getFatigueColor = (score) => {
   if (score >= 5 || score === "WARNING") return "bg-warning/10 text-warning";
   if (score >= 2 || score === "MILD") return "bg-primary/10 text-primary";
   return "bg-success/10 text-success";
+};
+const formatLastActive = (dateString) => {
+  if (!dateString) return "Offline";
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffInSeconds = Math.floor((now - date) / 1000);
+
+  if (diffInSeconds < 60) return "Just Now";
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
 };
 export function DriverMonitoring() {
   const [chatTarget, setChatTarget] = useState(null);
@@ -152,11 +161,17 @@ export function DriverMonitoring() {
                   {driver.fatigue_score > 7 ? 'SEVERE' : driver.fatigue_score > 4 ? 'WARNING' : 'NORMAL'}
                 </Badge>
               </TableCell>
-              <TableCell className="text-muted-foreground">0 km/h {/* Hardcoded: Speed Data */}</TableCell>
-              <TableCell className="text-muted-foreground">Just now {/* Hardcoded: Activity Data */}</TableCell>
+              <TableCell className="text-muted-foreground">
+                {driver.current_speed ? `${driver.current_speed.toFixed(1)} km/h` : '0 km/h'}
+              </TableCell>
+              <TableCell className="text-muted-foreground">
+                {formatLastActive(driver.updated_at)}
+              </TableCell>
               <TableCell>
-                <span className="font-medium text-success">
-                  95/100 {/* Hardcoded: Safety Score */}
+                <span className={`font-medium ${(driver.safety_score || 100) >= 80 ? 'text-success' :
+                    (driver.safety_score || 100) >= 50 ? 'text-warning' : 'text-destructive'
+                  }`}>
+                  {driver.safety_score || 100}/100
                 </span>
               </TableCell>
               <TableCell>
@@ -271,28 +286,28 @@ export function DriverMonitoring() {
             <h4 className="text-foreground mb-4">Device Status</h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="flex items-center gap-3">
-                <Battery className={`w-5 h-5 ${(selectedDriver.battery ?? 0) > 50
-                  ? "text-green-600"
-                  : (selectedDriver.battery ?? 0) > 20
-                    ? "text-yellow-600"
-                    : "text-red-600"}`} />
+                <Battery className={`w-5 h-5 ${(selectedDriver.battery_level ?? 100) > 50 ? "text-green-600" :
+                    (selectedDriver.battery_level ?? 100) > 20 ? "text-yellow-600" : "text-red-600"
+                  }`} />
                 <div>
                   <p className="text-muted-foreground">Battery</p>
-                  <p className="text-foreground">{selectedDriver.battery ?? 0}%</p>
+                  <p className="text-foreground">{selectedDriver.battery_level ?? 100}%</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <Wifi className="w-5 h-5 text-blue-600" />
+                <Wifi className={`w-5 h-5 ${selectedDriver.network_strength === 'Strong' ? "text-green-600" :
+                    selectedDriver.network_strength === 'Weak' ? "text-yellow-600" : "text-gray-400"
+                  }`} />
                 <div>
                   <p className="text-muted-foreground">Network</p>
-                  <p className="text-foreground">{selectedDriver.network ?? 'N/A'}</p>
+                  <p className="text-foreground">{selectedDriver.network_strength ?? 'Unknown'}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <Camera className={`w-5 h-5 ${selectedDriver.cameraActive ? "text-green-600" : "text-red-600"}`} />
+                <Camera className={`w-5 h-5 ${selectedDriver.camera_active ? "text-green-600" : "text-red-600"}`} />
                 <div>
                   <p className="text-muted-foreground">Camera</p>
-                  <p className="text-foreground">{selectedDriver.cameraActive ? "Active" : "Inactive"}</p>
+                  <p className="text-foreground">{selectedDriver.camera_active ? "Active" : "Inactive"}</p>
                 </div>
               </div>
             </div>
@@ -311,10 +326,10 @@ export function DriverMonitoring() {
               {selectedDriver.fatigue_score > 4 && selectedDriver.fatigue_score <= 7 && (<div className="p-3 bg-card rounded border border-orange-500/20">
                 <p className="text-orange-700">⚠️ Driver has shown increased fatigue in the past hour. Recommend a 10-minute break.</p>
               </div>)}
-              {(selectedDriver.battery ?? 100) < 40 && (<div className="p-3 bg-card rounded border border-yellow-500/20">
+              {(selectedDriver.battery_level ?? 100) < 40 && (<div className="p-3 bg-card rounded border border-yellow-500/20">
                 <p className="text-yellow-700">🔋 Low battery detected. Suggest driver charges device during next break.</p>
               </div>)}
-              {!selectedDriver.cameraActive && (<div className="p-3 bg-card rounded border border-red-500/20">
+              {!selectedDriver.camera_active && (<div className="p-3 bg-card rounded border border-red-500/20">
                 <p className="text-red-700">📷 Camera is inactive. Safety monitoring may be compromised.</p>
               </div>)}
               {selectedDriver.idleTime?.includes("hr") && (<div className="p-3 bg-card rounded border border-blue-500/20">

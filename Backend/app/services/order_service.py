@@ -417,6 +417,3 @@ class OrderService:
     def assign_zones(self, order: Order):
         # TODO: Implement zone assignment using clustering
         return
-    
-    
-        

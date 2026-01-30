@@ -12,7 +12,7 @@ from app.schemas.driver import (
     DriverCreate, DriverUpdate, LocationSchema, StatusUpdate,
     DriverResponse, DriverPerformanceStats, NearbyDriverResponse,
     ShiftStart, ShiftEnd, ShiftSummary, BreakRequest, DriverStatus, DutyStatus,
-    DriverListResponse, ZoneUpdate
+    DriverListResponse, ZoneUpdate, TelemetryUpdate
 )
 
 router = APIRouter()
@@ -283,3 +283,13 @@ def delete_driver(
     driver_service = DriverService(db)
     driver_service.delete_driver(driver_id=driver_id)
     return {"detail": f"Driver: {driver_id} deleted successfully"}
+
+@router.patch("/me/telemetry", response_model=DriverResponse)
+def update_my_telemetry(
+    telemetry_data: TelemetryUpdate,
+    db: Session = Depends(get_db),
+    driver = Depends(get_current_driver)
+):
+    driver_service = DriverService(db)
+    updated_driver = driver_service.update_telemetry(driver_id=driver.driver_id, telemetry=telemetry_data)
+    return DriverResponse.model_validate(updated_driver)

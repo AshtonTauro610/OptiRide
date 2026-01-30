@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from typing import Optional
 from datetime import datetime
 from enum import Enum
@@ -42,6 +42,14 @@ class DriverUpdate(DriverBase):
     user_id : str
     vehicle_type : Optional[str] = None
     license_plate : Optional[str] = None
+    shift_type : Optional[str] = None
+    shift_start_time : Optional[str] = None
+    shift_end_time : Optional[str] = None
+
+class TelemetryUpdate(BaseModel):
+    battery_level : Optional[int] = None
+    network_strength : Optional[str] = None
+    camera_active : Optional[bool] = None
 
 class DriverResponse(BaseModel):
     driver_id: str
@@ -53,17 +61,35 @@ class DriverResponse(BaseModel):
     license_plate: Optional[str] = None
     current_zone: Optional[str] = None
     status: DriverStatus
+
     location: Optional[LocationSchema] = None
+    current_speed : Optional[float] = 0.0
+    battery_level : Optional[int] = 100
+    network_strength : Optional[str] = "strong"
+    camera_active : Optional[bool] = True
+
     report_time: Optional[datetime] = None
-    exit_time: Optional[datetime] = None
     duty_status: str
     orders_received: int
     rating: float
     breaks: int
     safety_alerts: int
     fatigue_score: float
+    
+    # Scheduled shift timings
+    shift_type: Optional[str] = "Morning"
+    shift_start_time: Optional[str] = "09:00"
+    shift_end_time: Optional[str] = "17:00"
+    
     created_at: datetime
-    updated_at: datetime
+
+    @computed_field
+    def safety_score(self) -> float:
+        base_score = 100
+        alert_penalty = (self.safety_alerts or 0) * 5
+        fatigue_penalty = (self.fatigue_score or 0) * 2
+        final_score =  base_score - alert_penalty - fatigue_penalty
+        return max(0, min(final_score, 100))
 
     class Config:
         from_attributes = True

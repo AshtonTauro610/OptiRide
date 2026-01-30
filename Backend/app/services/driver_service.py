@@ -8,10 +8,11 @@ from app.core.kafka import kafka_producer
 from app.models.driver import Driver
 from app.models.order import Order
 from app.models.alert import Alert
+from app.schemas.alert import AlertType, AlertSeverity
 from app.schemas.driver import (
     DriverCreate, DriverUpdate, LocationSchema,
     DriverPerformanceStats, NearbyDriverResponse,
-    ShiftStart, ShiftEnd, ShiftSummary, BreakRequest, DriverStatus, DutyStatus
+    ShiftStart, ShiftEnd, ShiftSummary, BreakRequest, DriverStatus, DutyStatus, TelemetryUpdate
 )
 
 
@@ -86,20 +87,58 @@ class DriverService:
         point_wkt = WKTElement(f'POINT({location_data.longitude} {location_data.latitude})', srid=4326)
         driver.location = point_wkt
 
+        if location_data.speed is not None:
+            driver.current_speed = location_data.speed
+        if location_data.heading is not None:
+            driver.heading = location_data.heading
+
         self.db.commit()
 
         kafka_producer.publish("driver-location", {
             "driver_id": driver.driver_id,
             "latitude": location_data.latitude,
             "longitude": location_data.longitude,
-            "speed": location_data.speed,
-            "heading": location_data.heading,
+            "speed": driver.current_speed,
+            "heading": driver.heading,
             "status": driver.status,
             "timestamp": str(datetime.now())
         })
 
         return driver
     
+    def update_telemetry(self, driver_id: str, telemetry: TelemetryUpdate) -> Driver:
+        driver = self.get_driver_by_id(driver_id)
+        if not driver:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Driver not found"
+            )
+        
+        if telemetry.battery_level is not None:
+            driver.battery_level = telemetry.battery_level
+            if driver.battery_level < 20:
+                existing_alert = self.db.query(Alert).filter(
+                    Alert.driver_id == driver_id,
+                    Alert.alert_type == AlertType.DEVICE.value,
+                    Alert.acknowledged == False
+                ).first()
+                if not existing_alert:
+                    alert = Alert(
+                        driver_id=driver_id,
+                        alert_type=AlertType.DEVICE.value,
+                        severity=AlertSeverity.MODERATE.value,
+                        location=driver.location,  # Use driver's current location
+                        acknowledged=False
+                    )
+                    self.db.add(alert)
+        if telemetry.network_strength is not None:
+            driver.network_strength = telemetry.network_strength
+        if telemetry.camera_active is not None:
+            driver.camera_active = telemetry.camera_active
+
+        self.db.commit()
+        return driver
+       
     def get_location(self, driver_id: str) -> Optional[LocationSchema]:
         driver = self.get_driver_by_id(driver_id)
 

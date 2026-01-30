@@ -1,10 +1,19 @@
-import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useMemo, useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import MapView, { Polyline, Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { ArrowLeftIcon } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
 import { useOrders } from '@/contexts/OrdersContext';
+
+// Conditionally import MapView for native platforms
+let MapView, Marker, Polyline, PROVIDER_GOOGLE;
+if (Platform.OS !== 'web') {
+  const Maps = require('react-native-maps');
+  MapView = Maps.default;
+  Marker = Maps.Marker;
+  Polyline = Maps.Polyline;
+  PROVIDER_GOOGLE = Maps.PROVIDER_GOOGLE;
+}
 
 export default function OrderPickupScreen() {
   const router = useRouter();
@@ -17,8 +26,23 @@ export default function OrderPickupScreen() {
     () => orders.find((o) => o.id === orderId),
     [orders, orderId],
   );
-  
-  // Fallback if order not found
+
+  const initialRegion = useMemo(() => {
+    if (!order) return {
+      latitude: 25.2048,
+      longitude: 55.2708,
+      latitudeDelta: 0.05,
+      longitudeDelta: 0.05,
+    };
+
+    return {
+      latitude: order.pickupLatitude || 25.2048,
+      longitude: order.pickupLongitude || 55.2708,
+      latitudeDelta: 0.02,
+      longitudeDelta: 0.02,
+    };
+  }, [order]);
+
   if (isLoadingOrders) {
     return (
       <View style={styles.container}>
@@ -26,7 +50,7 @@ export default function OrderPickupScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <ArrowLeftIcon size={24} color="#ffffff" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Loading order…</Text>
+          <Text style={styles.headerTitle}>Loading order...</Text>
         </View>
         <View style={styles.errorContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -57,29 +81,28 @@ export default function OrderPickupScreen() {
       longitude: order.pickupLongitude || 55.2708,
     },
     {
-      latitude: order.dropoffLatitude || 25.197,
-      longitude: order.dropoffLongitude || 55.278,
+      latitude: order.deliveryLatitude || 25.197,
+      longitude: order.deliveryLongitude || 55.278,
     },
   ];
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <ArrowLeftIcon size={24} color="#ffffff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Navigate to {order.orderNumber}&apos;s Location</Text>
-      </View>
+  const renderMap = () => {
+    if (Platform.OS === 'web' || !MapView) {
+      return (
+        <View style={styles.webPlaceholder}>
+          <Text style={styles.webText}>🗺️ Map Preview</Text>
+          <Text style={styles.webSubtext}>
+            Navigation data for {order.restaurant}
+          </Text>
+        </View>
+      );
+    }
 
+    return (
       <MapView
-        provider={PROVIDER_DEFAULT}
+        provider={PROVIDER_GOOGLE}
         style={styles.map}
-        initialRegion={{
-          latitude: 25.2009,
-          longitude: 55.2744,
-          latitudeDelta: 0.02,
-          longitudeDelta: 0.02,
-        }}
+        initialRegion={initialRegion}
       >
         <Polyline
           coordinates={routeCoordinates}
@@ -97,11 +120,24 @@ export default function OrderPickupScreen() {
           pinColor={theme.colors.error}
         />
       </MapView>
+    );
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+          <ArrowLeftIcon size={24} color="#ffffff" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Navigate to {order.orderNumber}&apos;s Location</Text>
+      </View>
+
+      {renderMap()}
 
       <View style={styles.infoCard}>
         <Text style={styles.restaurantName}>{order.restaurant}</Text>
         <Text style={styles.address}>{order.location}</Text>
-        <Text style={styles.distance}>Customer: {order.details.customerName}</Text>
+        <Text style={styles.distance}>Customer: {order.details?.customerName || "N/A"}</Text>
       </View>
     </View>
   );

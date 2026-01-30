@@ -27,6 +27,7 @@ class SafetyMonitoringService:
         self.NORMAL_BLINK_RATE = 15
         self.DROWSY_BLINK_RATE = 8
         self.HEAD_TILT_THRESHOLD = 20
+        self.SPEED_LIMIT_KMH = 100
 
         self.load_models()
     
@@ -408,6 +409,23 @@ class SafetyMonitoringService:
             )
             self.db.add(alert)
             alerts.append(alert)
+        
+        if location_data and location_data.speed and location_data.speed > self.SPEED_LIMIT_KMH:
+            recent_alert = self.db.query(Alert).filter(
+                Alert.driver_id == driver_id,
+                Alert.alert_type == AlertType.SPEEDING.value,
+                Alert.acknowledged == False
+            ).first()
+            if not recent_alert:
+                alert = Alert(
+                    driver_id=driver_id,
+                    alert_type=AlertType.SPEEDING.value,
+                    severity=AlertSeverity.WARNING.value,
+                    location= WKTElement(f'POINT({location_data.longitude} {location_data.latitude})', srid=4326),
+                    acknowledged=False
+                )
+                self.db.add(alert)
+                alerts.append(alert) 
         
         if alerts:
             self.db.commit()

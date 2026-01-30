@@ -2,8 +2,9 @@ import { Card } from "@/components/Card";
 import { StatusBadge } from "@/components/StatusBadge";
 import { theme } from "@/constants/theme";
 import { useTheme } from "@/contexts/ThemeContext";
-import { rider } from "@/mocks/rider";
+import { useAuth } from "@/contexts/AuthContext";
 import { zones } from "@/mocks/zones";
+import { fetchDriverProfile, fetchDriverPerformanceStats } from "@/services/driver";
 import { useRouter } from "expo-router";
 import {
   Bell,
@@ -12,26 +13,130 @@ import {
   TrendingUpIcon,
   User,
 } from "lucide-react-native";
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
+  ActivityIndicator,
+  Platform,
 } from "react-native";
-import MapView, { Polygon, PROVIDER_DEFAULT } from "react-native-maps";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+// Only import react-native-maps on native platforms
+let MapView, Polygon, PROVIDER_DEFAULT;
+if (Platform.OS !== 'web') {
+  const Maps = require('react-native-maps');
+  MapView = Maps.default;
+  Polygon = Maps.Polygon;
+  PROVIDER_DEFAULT = Maps.PROVIDER_DEFAULT;
+}
+
+import { useSensors } from "@/contexts/SensorContext";
 
 export default function HomeScreen() {
   const router = useRouter();
   const { isDarkMode } = useTheme();
-  const currentZone = zones.find((z) => z.code === rider.currentZone);
-  const assignedZone = zones.find((z) => z.code === rider.assignedZone);
-  const progressPercentage =
-    (rider.deliveriesCompleted / rider.totalDeliveries) * 100;
+  const { token } = useAuth();
+  const { isOnline, toggleOnline } = useSensors();
+
+  // Dynamic data from API
+  const [driverProfile, setDriverProfile] = useState(null);
+  const [performanceStats, setPerformanceStats] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Default shift times (used when backend hasn't set values yet)
+  const DEFAULT_SHIFT = {
+    type: "Morning",
+    start: "09:00",
+    end: "17:00",
+  };
+
+  // Helper to format time from 24h ("09:00") to 12h ("9:00 AM")
+  const formatTime = (time24) => {
+    if (!time24) return null; // Return null to trigger fallback
+    const [hours, minutes] = time24.split(":").map(Number);
+    if (isNaN(hours) || isNaN(minutes)) return null;
+    const period = hours >= 12 ? "PM" : "AM";
+    const hours12 = hours % 12 || 12;
+    return `${hours12}:${minutes.toString().padStart(2, "0")} ${period}`;
+  };
+
+  // Get shift times with fallbacks
+  const shiftType = driverProfile?.shift_type || DEFAULT_SHIFT.type;
+  const shiftStartTime = formatTime(driverProfile?.shift_start_time) || formatTime(DEFAULT_SHIFT.start);
+  const shiftEndTime = formatTime(driverProfile?.shift_end_time) || formatTime(DEFAULT_SHIFT.end);
+
+  // HARDCODED: Assigned zone - no backend endpoint for zone assignments
+  const assignedZoneCode = "A3";
+
+  useEffect(() => {
+    loadData();
+  }, [token]);
+
+  const loadData = async () => {
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const [profile, stats] = await Promise.all([
+        fetchDriverProfile(token),
+        fetchDriverPerformanceStats(token).catch(() => null), // Performance stats might fail
+      ]);
+
+      setDriverProfile(profile);
+      setPerformanceStats(stats);
+    } catch (err) {
+      console.warn("Failed to load driver data:", err);
+      setError("Failed to load data. Pull down to refresh.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Get zone data from hardcoded zones based on zone code from API
+  const currentZoneCode = driverProfile?.current_zone || "A1";
+  const currentZone = zones.find((z) => z.code === currentZoneCode);
+  const assignedZone = zones.find((z) => z.code === assignedZoneCode);
+
+  // Calculate deliveries progress
+  const deliveriesCompleted = performanceStats?.today_orders || 0;
+  const totalDeliveries = performanceStats?.total_orders || 20; // Fallback to 20
+  const progressPercentage = totalDeliveries > 0
+    ? Math.min((deliveriesCompleted / Math.max(totalDeliveries, deliveriesCompleted)) * 100, 100)
+    : 0;
 
   const bgColor = isDarkMode ? "#111827" : "#F9FAFB";
+
+  // Map driver status to display format
+  const getStatusDisplay = (status) => {
+    const statusMap = {
+      available: { status: "online", label: "Status: Online" },
+      offline: { status: "offline", label: "Status: Offline" },
+      busy: { status: "busy", label: "Status: Busy" },
+      on_break: { status: "break", label: "Status: On Break" },
+    };
+    return statusMap[status] || statusMap.offline;
+  };
+
+  const statusDisplay = getStatusDisplay(driverProfile?.status);
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, styles.centered, { backgroundColor: bgColor }]}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: bgColor }]}>
@@ -64,12 +169,25 @@ export default function HomeScreen() {
       >
         <View style={styles.welcomeSection}>
           <Text style={styles.welcomeText}>Welcome back,</Text>
-          <Text style={styles.nameText}>{rider.name}</Text>
-          <StatusBadge
-            status={rider.status}
-            label={`Status: ${rider.status === "online" ? "Online" : "Offline"}`}
-            style={styles.statusBadge}
-          />
+          <Text style={styles.nameText}>{driverProfile?.name || "Driver"}</Text>
+          <View style={styles.statusRow}>
+            <StatusBadge
+              status={statusDisplay.status}
+              label={statusDisplay.label}
+              style={styles.statusBadge}
+            />
+            <TouchableOpacity
+              onPress={toggleOnline}
+              style={[
+                styles.miniActionButton,
+                { backgroundColor: isOnline ? theme.colors.error : theme.colors.success }
+              ]}
+            >
+              <Text style={styles.miniActionButtonText}>
+                {isOnline ? "Go Offline" : "Go Online"}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <TouchableOpacity
@@ -83,44 +201,51 @@ export default function HomeScreen() {
             </View>
             <View style={styles.zoneContent}>
               <View style={styles.zoneInfo}>
-                <Text style={styles.zoneCode}>{currentZone?.code}</Text>
+                <Text style={styles.zoneCode}>{currentZone?.code || currentZoneCode}</Text>
                 <Text style={styles.zoneDescription}>
-                  {currentZone?.description}
+                  {currentZone?.description || "Loading zone..."} {/* HARDCODED: Zone description */}
                 </Text>
                 <StatusBadge
-                  status={currentZone?.demand || "low"}
-                  label={`${currentZone?.demand} demand`}
+                  status={currentZone?.demand || "low"} // HARDCODED: Demand level
+                  label={`${currentZone?.demand || "low"} demand`}
                 />
               </View>
               <View style={styles.mapPreview}>
-                <MapView
-                  provider={PROVIDER_DEFAULT}
-                  style={styles.miniMap}
-                  initialRegion={{
-                    latitude: currentZone?.coordinates[0].latitude || 25.2048,
-                    longitude: currentZone?.coordinates[0].longitude || 55.2708,
-                    latitudeDelta: 0.02,
-                    longitudeDelta: 0.02,
-                  }}
-                  scrollEnabled={false}
-                  zoomEnabled={false}
-                  pitchEnabled={false}
-                  rotateEnabled={false}
-                >
-                  {currentZone && (
-                    <Polygon
-                      coordinates={currentZone.coordinates}
-                      fillColor={`${currentZone.color}40`}
-                      strokeColor={currentZone.color}
-                      strokeWidth={2}
-                    />
-                  )}
-                </MapView>
+                {Platform.OS !== 'web' && MapView ? (
+                  <MapView
+                    provider={PROVIDER_DEFAULT}
+                    style={styles.miniMap}
+                    initialRegion={{
+                      latitude: currentZone?.coordinates[0].latitude || 25.2048,
+                      longitude: currentZone?.coordinates[0].longitude || 55.2708,
+                      latitudeDelta: 0.02,
+                      longitudeDelta: 0.02,
+                    }}
+                    scrollEnabled={false}
+                    zoomEnabled={false}
+                    pitchEnabled={false}
+                    rotateEnabled={false}
+                  >
+                    {currentZone && (
+                      <Polygon
+                        coordinates={currentZone.coordinates}
+                        fillColor={`${currentZone.color}40`}
+                        strokeColor={currentZone.color}
+                        strokeWidth={2}
+                      />
+                    )}
+                  </MapView>
+                ) : (
+                  <View style={styles.webMapPlaceholder}>
+                    <Text style={styles.webMapText}>🗺️</Text>
+                  </View>
+                )}
               </View>
             </View>
           </Card>
         </TouchableOpacity>
 
+        {/* HARDCODED: Assigned zone - no backend endpoint for zone reassignment */}
         <Card style={styles.assignedCard}>
           <View style={styles.zoneHeader}>
             <TrendingUpIcon size={20} color={theme.colors.error} />
@@ -147,12 +272,12 @@ export default function HomeScreen() {
           <View style={styles.shiftInfo}>
             <View style={styles.shiftRow}>
               <Text style={styles.shiftLabel}>Shift Type:</Text>
-              <Text style={styles.shiftValue}>{rider.shiftType}</Text>
+              <Text style={styles.shiftValue}>{shiftType}</Text>
             </View>
             <View style={styles.shiftRow}>
               <Text style={styles.shiftLabel}>Time:</Text>
               <Text style={styles.shiftValue}>
-                {rider.shiftStart} - {rider.shiftEnd}
+                {shiftStartTime} - {shiftEndTime}
               </Text>
             </View>
           </View>
@@ -160,7 +285,7 @@ export default function HomeScreen() {
             <View style={styles.progressHeader}>
               <Text style={styles.progressLabel}>Deliveries Completed</Text>
               <Text style={styles.progressValue}>
-                {rider.deliveriesCompleted}/{rider.totalDeliveries}
+                {deliveriesCompleted}/{Math.max(totalDeliveries, deliveriesCompleted)}
               </Text>
             </View>
             <View style={styles.progressBar}>
@@ -174,7 +299,6 @@ export default function HomeScreen() {
           </View>
         </Card>
 
-       
       </ScrollView>
     </View>
   );
@@ -183,6 +307,15 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  centered: {
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: theme.spacing.md,
+    fontSize: theme.fontSize.base,
+    color: theme.colors.textSecondary,
   },
   headerWrapper: {
     backgroundColor: "#0b0f3d",
@@ -232,7 +365,28 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.sm,
   },
   statusBadge: {
-    marginTop: theme.spacing.xs,
+    marginTop: 0,
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: theme.spacing.sm,
+  },
+  miniActionButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    elevation: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+  },
+  miniActionButtonText: {
+    color: "#FFFFFF",
+    fontWeight: "600",
+    fontSize: 14,
   },
   zoneCard: {
     marginBottom: theme.spacing.md,
@@ -276,6 +430,16 @@ const styles = StyleSheet.create({
   miniMap: {
     width: "100%",
     height: "100%",
+  },
+  webMapPlaceholder: {
+    width: "100%",
+    height: "100%",
+    backgroundColor: theme.colors.card,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  webMapText: {
+    fontSize: 32,
   },
   assignedCard: {
     marginBottom: theme.spacing.md,

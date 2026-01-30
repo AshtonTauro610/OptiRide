@@ -4,6 +4,24 @@ export async function fetchDriverOrders(token) {
   return apiFetch("/orders/driver/orders", { token });
 }
 
+export async function fetchOfferedOrders(token) {
+  return apiFetch("/orders/offered/me", { token });
+}
+
+export async function acceptOrder(token, orderId) {
+  return apiFetch(`/orders/${orderId}/accept`, {
+    method: "POST",
+    token,
+  });
+}
+
+export async function rejectOrder(token, orderId) {
+  return apiFetch(`/orders/${orderId}/reject`, {
+    method: "POST",
+    token,
+  });
+}
+
 export async function submitPickup(
   token,
   orderId,
@@ -27,3 +45,4 @@ export async function submitDelivery(
     body: payload,
   });
 }
+

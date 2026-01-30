@@ -21,22 +21,18 @@ export function getFirebaseApp() {
 
 export function getFirebaseAuth() {
   const app = getFirebaseApp();
-  
+
   if (!app) {
     // Return a mock auth object when Firebase is not configured
     return null;
   }
 
   if (!firebaseAuth) {
-    try {
-      // Try to get existing auth instance
-      firebaseAuth = getAuth(app);
-    } catch (error) {
-      // Initialize auth with AsyncStorage persistence for React Native
-      firebaseAuth = initializeAuth(app, {
-        persistence: getReactNativePersistence(AsyncStorage)
-      });
-    }
+    // In React Native, we must use initializeAuth with getReactNativePersistence
+    // to ensure auth state persists between app restarts.
+    firebaseAuth = initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage)
+    });
   }
 
   return firebaseAuth;

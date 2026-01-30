@@ -1,10 +1,19 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import MapView, { Polyline, Marker, PROVIDER_DEFAULT } from 'react-native-maps';
 import { ArrowLeftIcon } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
 import { zones } from '@/mocks/zones';
+
+// Conditionally import MapView for native platforms
+let MapView, Polyline, Marker, PROVIDER_GOOGLE;
+if (Platform.OS !== 'web') {
+  const Maps = require('react-native-maps');
+  MapView = Maps.default;
+  Polyline = Maps.Polyline;
+  Marker = Maps.Marker;
+  PROVIDER_GOOGLE = Maps.PROVIDER_GOOGLE;
+}
 
 export default function ZoneNavigationScreen() {
   const router = useRouter();
@@ -16,6 +25,23 @@ export default function ZoneNavigationScreen() {
     { latitude: 25.1852, longitude: 55.2721 },
   ];
 
+  // Web fallback
+  if (Platform.OS === 'web') {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+            <ArrowLeftIcon size={24} color="#ffffff" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Navigate to Zone {targetZone?.code}</Text>
+        </View>
+        <View style={styles.webPlaceholder}>
+          <Text style={styles.webPlaceholderText}>🗺️ Map not available on web</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -26,7 +52,7 @@ export default function ZoneNavigationScreen() {
       </View>
 
       <MapView
-        provider={PROVIDER_DEFAULT}
+        provider={PROVIDER_GOOGLE}
         style={styles.map}
         initialRegion={{
           latitude: 25.1950,
@@ -105,6 +131,16 @@ const styles = StyleSheet.create({
   },
   infoSubtitle: {
     fontSize: theme.fontSize.base,
+    color: theme.colors.textSecondary,
+  },
+  webPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1E293B',
+  },
+  webPlaceholderText: {
+    fontSize: theme.fontSize.lg,
     color: theme.colors.textSecondary,
   },
 });

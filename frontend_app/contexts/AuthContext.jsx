@@ -41,14 +41,35 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
 
   const login = useCallback(async (email, password) => {
     setError(null);
-    
+
+    // Helper function to get user-friendly error messages
+    const getErrorMessage = (error) => {
+      const errorCode = error.code || '';
+
+      const errorMessages = {
+        'auth/invalid-credential': 'Invalid email or password. Please try again.',
+        'auth/invalid-email': 'Please enter a valid email address.',
+        'auth/user-disabled': 'This account has been disabled. Please contact support.',
+        'auth/user-not-found': 'No account found with this email address.',
+        'auth/wrong-password': 'Incorrect password. Please try again.',
+        'auth/too-many-requests': 'Too many failed attempts. Please try again later.',
+        'auth/network-request-failed': 'Network error. Please check your internet connection.',
+        'auth/email-already-in-use': 'This email is already registered.',
+        'auth/weak-password': 'Password is too weak. Please use a stronger password.',
+        'auth/operation-not-allowed': 'This sign-in method is not enabled.',
+        'auth/api-key-not-valid.-please-pass-a-valid-api-key.': 'App configuration error. Please contact support.',
+      };
+
+      return errorMessages[errorCode] || 'Login failed. Please check your credentials and try again.';
+    };
+
     try {
       const auth = getFirebaseAuth();
-      
+
       if (!auth) {
-        throw new Error("Firebase is not properly configured. Please check your .env file and ensure all EXPO_PUBLIC_FIREBASE_* values are set correctly.");
+        throw new Error("Unable to connect to authentication service. Please try again later.");
       }
-      
+
       const credentials = await signInWithEmailAndPassword(auth, email, password);
       const idToken = await credentials.user.getIdToken();
 
@@ -60,9 +81,12 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
 
       return profile;
     } catch (err) {
-      console.error("Login error:", err);
-      setError(err.message || "Login failed. Please check your credentials.");
-      throw err;
+      const friendlyMessage = getErrorMessage(err);
+      setError(friendlyMessage);
+      // Create a new error with the friendly message
+      const userError = new Error(friendlyMessage);
+      userError.code = err.code;
+      throw userError;
     }
   }, []);
 

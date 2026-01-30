@@ -1,53 +1,67 @@
-import { Users, AlertTriangle, Package, UserX, CheckCircle, Clock, TrendingUp } from "lucide-react";
+import { Users, AlertTriangle, Package, UserX, CheckCircle, Clock, TrendingUp, Activity } from "lucide-react";
 import { MetricCard } from "@/components/shared/MetricCard";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { HighDemandMap } from "@/components/shared/HighDemandMap";
 import { XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, LineChart, Line } from "recharts";
-import { useDriversSummary, useOrderStats, usePolling, useOrders } from "@/utils/hooks/use-api";
-
-// Time-Series Data Hardcoded for now
-const deliveriesData = [
-  { time: "00:00", completed: 20, failed: 2, ongoing: 15 },
-  { time: "04:00", completed: 15, failed: 1, ongoing: 10 },
-  { time: "08:00", completed: 180, failed: 5, ongoing: 85 },
-  { time: "12:00", completed: 320, failed: 8, ongoing: 120 },
-  { time: "16:00", completed: 280, failed: 6, ongoing: 95 },
-  { time: "20:00", completed: 200, failed: 4, ongoing: 60 },
-  { time: "23:59", completed: 45, failed: 2, ongoing: 25 },
-];
-
-const weeklyData = [
-  { day: "Mon", efficiency: 92, deliveries: 2100 },
-  { day: "Tue", efficiency: 88, deliveries: 1950 },
-  { day: "Wed", efficiency: 94, deliveries: 2200 },
-  { day: "Thu", efficiency: 91, deliveries: 2050 },
-  { day: "Fri", efficiency: 96, deliveries: 2400 },
-  { day: "Sat", efficiency: 93, deliveries: 2150 },
-  { day: "Sun", efficiency: 89, deliveries: 1800 },
-];
+import {
+  useFleetDashboardCharts,
+  useDashboardOverview,
+  useDriversSummary,
+  useRealtimeMetrics,
+  usePolling
+} from "@/utils/hooks/use-api";
 
 export function FleetDashboard() {
+  // Analytics service hooks
+  const { data: dashboardCharts, refetch: refetchCharts } = useFleetDashboardCharts();
+  const { data: dashboardOverview, refetch: refetchOverview } = useDashboardOverview('today');
+  const { data: realtimeMetrics, refetch: refetchRealtime } = useRealtimeMetrics();
   const { data: driversSummary, refetch: refetchDrivers } = useDriversSummary();
-  const { data: orderStats, refetch: refetchOrders } = useOrderStats();
-  const { data: recentOrdersData, refetch: refetchRecent } = useOrders();
 
-  // Refresh data every 10 seconds
+  // Poll for real-time updates
   usePolling(() => {
+    refetchCharts();
+    refetchOverview();
+    refetchRealtime();
     refetchDrivers();
-    refetchOrders();
-    refetchRecent();
-  }, 10000);
+  }, 5000);
 
-  // Calculate high-level metrics
-  const availableDrivers = driversSummary?.available_drivers || 0;
-  const busyDrivers = driversSummary?.busy_drivers || 0;
-  const onBreakDrivers = driversSummary?.on_break_drivers || 0;
+  // Extract chart data from analytics service
+  const deliveriesData = dashboardCharts?.hourly_stats || [];
+  const weeklyData = dashboardCharts?.weekly_stats?.map(item => ({
+    day: item.day,
+    deliveries: item.completed_orders || item.total_orders,
+    efficiency: item.efficiency || 0
+  })) || [];
+
+  // Driver metrics from drivers summary
+  const availableDrivers = realtimeMetrics?.drivers_available || 0;
+  const busyDrivers = realtimeMetrics?.drivers_busy || 0;
+  const onBreakDrivers = realtimeMetrics?.drivers_on_break || 0;
   const offlineDrivers = driversSummary?.offline_drivers || 0;
   const totalDrivers = driversSummary?.total_drivers || 0;
+  const totalActiveDrivers = availableDrivers + busyDrivers;
 
-  const totalActive = availableDrivers + busyDrivers;
-  const efficiencyRate = totalDrivers > 0 ? ((totalActive / totalDrivers) * 100).toFixed(1) : "0";
+  // Real-time metrics from analytics service
+  const driversOnline = realtimeMetrics?.drivers_online || 0;
+  const ordersPending = realtimeMetrics?.orders_pending || 0;
+  const ordersInProgress = realtimeMetrics?.orders_in_progress || 0;
+  const ordersCompletedToday = realtimeMetrics?.orders_completed_today || 0;
+  const ordersPerHour = realtimeMetrics?.orders_per_hour || 0;
+  const avgWaitTime = realtimeMetrics?.avg_wait_time_min || 0;
+  const activeAlerts = realtimeMetrics?.active_alerts || 0;
+
+  // Dashboard overview metrics (with trends)
+  const totalRevenue = dashboardOverview?.total_revenue || 0;
+  const avgDeliveryTime = dashboardOverview?.avg_delivery_time_min || 0;
+  const driverUtilizationRate = dashboardOverview?.driver_utilization_rate || 0;
+  const orderCompletionRate = dashboardOverview?.order_completion_rate || 0;
+
+  // Trend percentages from dashboard overview
+  const ordersChangePct = dashboardOverview?.orders_change_percent || 0;
+  const revenueChangePct = dashboardOverview?.revenue_change_percent || 0;
+  const driversChangePct = dashboardOverview?.drivers_change_percent || 0;
 
   // Map driver status for the distribution card
   const driverStatusData = [
@@ -60,14 +74,11 @@ export function FleetDashboard() {
     percentage: totalDrivers > 0 ? ((item.value / totalDrivers) * 100).toFixed(1) : 0
   }));
 
-  // Map recent orders to activity feed
-  const recentActivity = (recentOrdersData?.orders || recentOrdersData || []).slice(0, 5).map(order => ({
-    id: order.order_id,
-    type: order.status === 'delivered' ? 'completed' : 'active',
-    driver: order.driver_id || 'Unassigned',
-    order: `#${order.order_id.substring(0, 5)}`,
-    time: new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  }));
+  // Helper function to format trend
+  const getTrend = (val) => ({
+    value: `${Math.abs(val || 0).toFixed(1)}%`,
+    isPositive: (val || 0) >= 0
+  });
 
   return (
     <div className="p-6 space-y-6">
@@ -77,78 +88,81 @@ export function FleetDashboard() {
           <h1 className="text-2xl font-bold">Fleet Dashboard</h1>
           <p className="text-muted-foreground">Monitor your fleet operations in real-time</p>
         </div>
-        <Badge className="bg-success/10 text-success hover:bg-success/20 border-0">
-          All Systems Operational
-        </Badge>
+        <div className="flex items-center gap-2">
+          {activeAlerts > 0 && (
+            <Badge className="bg-destructive/10 text-destructive hover:bg-destructive/20 border-0">
+              {activeAlerts} Active Alerts
+            </Badge>
+          )}
+          <Badge className="bg-success/10 text-success hover:bg-success/20 border-0">
+            All Systems Operational
+          </Badge>
+        </div>
       </div>
 
-      {/* Top Metrics */}
+      {/* Top Metrics - Real-time data */}
       <div className="grid grid-cols-4 gap-4">
         <MetricCard
-          title="Active Drivers"
-          value={totalActive.toString()}
-          subtitle="Drivers on duty"
+          title="Drivers Online"
+          value={driversOnline.toString()}
+          subtitle={`${totalActiveDrivers} actively working`}
           icon={Users}
-          trend={{ value: "12", isPositive: true }}
           iconColor="text-success"
         />
         <MetricCard
           title="Pending Orders"
-          value={(orderStats?.pending || 0).toString()}
-          subtitle="Awaiting assignment"
+          value={ordersPending.toString()}
+          subtitle={`Avg wait: ${avgWaitTime.toFixed(1)} min`}
           icon={AlertTriangle}
-          trend={{ value: "3", isPositive: false }}
           iconColor="text-destructive"
         />
         <MetricCard
-          title="Ongoing Orders"
-          value={((orderStats?.assigned || 0) + (orderStats?.picked_up || 0)).toString()}
-          subtitle="In progress"
+          title="In Progress"
+          value={ordersInProgress.toString()}
+          subtitle={`${ordersPerHour.toFixed(1)} orders/hour`}
           icon={Package}
-          trend={{ value: "24", isPositive: true }}
           iconColor="text-primary"
         />
         <MetricCard
           title="Available Drivers"
           value={availableDrivers.toString()}
-          subtitle="Waiting for assignment"
+          subtitle="Ready for assignment"
           icon={UserX}
-          trend={{ value: "8", isPositive: false }}
           iconColor="text-muted-foreground"
         />
       </div>
 
-      {/* Second Row Metrics */}
+      {/* Second Row Metrics - Dashboard overview with trends */}
       <div className="grid grid-cols-4 gap-4">
         <MetricCard
           title="Completed Today"
-          value={(orderStats?.delivered || 0).toLocaleString()}
-          subtitle="Successful deliveries"
+          value={ordersCompletedToday.toLocaleString()}
+          subtitle={`${orderCompletionRate.toFixed(1)}% completion rate`}
           icon={CheckCircle}
-          trend={{ value: "156", isPositive: true }}
+          trend={getTrend(ordersChangePct)}
           iconColor="text-success"
         />
         <MetricCard
           title="Total Revenue"
-          value={`$${(orderStats?.total_revenue || 0).toLocaleString()}`}
+          value={`$${totalRevenue.toLocaleString()}`}
           subtitle="Today's earnings"
           icon={TrendingUp}
+          trend={getTrend(revenueChangePct)}
           iconColor="text-success"
         />
         <MetricCard
-          title="Average Delivery Time"
-          value={`${orderStats?.avg_delivery_time_min || 0} min`}
+          title="Avg Delivery Time"
+          value={`${avgDeliveryTime.toFixed(1)} min`}
           subtitle="Per order"
           icon={Clock}
-          trend={{ value: "5 min", isPositive: true }}
           iconColor="text-primary"
         />
         <MetricCard
           title="Fleet Utilization"
-          value={`${efficiencyRate}%`}
-          subtitle="Overall efficiency"
-          icon={TrendingUp}
-          trend={{ value: "2.3%", isPositive: true }}
+          value={`${driverUtilizationRate.toFixed(1)}%`}
+          subtitle="Driver efficiency"
+          icon={Activity}
+          trend={getTrend(driversChangePct)}
           iconColor="text-success"
         />
       </div>
@@ -175,9 +189,9 @@ export function FleetDashboard() {
                     border: '1px solid hsl(var(--border))',
                     borderRadius: '8px'
                   }} />
-                  <Area type="monotone" dataKey="completed" stackId="1" stroke="hsl(var(--success))" fill="hsl(var(--success) / 0.3)" />
-                  <Area type="monotone" dataKey="failed" stackId="1" stroke="hsl(var(--destructive))" fill="hsl(var(--destructive) / 0.3)" />
-                  <Area type="monotone" dataKey="ongoing" stackId="1" stroke="hsl(var(--primary))" fill="hsl(var(--primary) / 0.3)" />
+                  <Area type="monotone" dataKey="completed" stackId="1" stroke="hsl(var(--success))" fill="hsl(var(--success) / 0.3)" name="Completed" />
+                  <Area type="monotone" dataKey="cancelled" stackId="1" stroke="hsl(var(--destructive))" fill="hsl(var(--destructive) / 0.3)" name="Cancelled" />
+                  <Area type="monotone" dataKey="ongoing" stackId="1" stroke="hsl(var(--primary))" fill="hsl(var(--primary) / 0.3)" name="Ongoing" />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -188,7 +202,7 @@ export function FleetDashboard() {
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-destructive" />
-                <span className="text-xs text-muted-foreground">Failed</span>
+                <span className="text-xs text-muted-foreground">Cancelled</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 rounded-full bg-primary" />
@@ -225,14 +239,14 @@ export function FleetDashboard() {
               </div>
               <div className="flex items-center justify-between text-sm mt-1">
                 <span className="text-muted-foreground">Utilization</span>
-                <span className="font-medium text-success">{efficiencyRate}%</span>
+                <span className="font-medium text-success">{driverUtilizationRate.toFixed(1)}%</span>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Weekly Performance and Recent Activity */}
+      {/* Weekly Performance and Real-time Stats */}
       <div className="grid grid-cols-3 gap-6">
         <Card className="col-span-2">
           <CardHeader>
@@ -251,8 +265,8 @@ export function FleetDashboard() {
                     border: '1px solid hsl(var(--border))',
                     borderRadius: '8px'
                   }} />
-                  <Line yAxisId="left" type="monotone" dataKey="efficiency" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ fill: 'hsl(var(--primary))' }} />
-                  <Line yAxisId="right" type="monotone" dataKey="deliveries" stroke="hsl(var(--success))" strokeWidth={2} dot={{ fill: 'hsl(var(--success))' }} />
+                  <Line yAxisId="left" type="monotone" dataKey="efficiency" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ fill: 'hsl(var(--primary))' }} name="Efficiency %" />
+                  <Line yAxisId="right" type="monotone" dataKey="deliveries" stroke="hsl(var(--success))" strokeWidth={2} dot={{ fill: 'hsl(var(--success))' }} name="Total Deliveries" />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -269,32 +283,44 @@ export function FleetDashboard() {
           </CardContent>
         </Card>
 
+        {/* Real-time Metrics Summary */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Recent Activity</CardTitle>
-            <span className="text-xs text-primary cursor-pointer hover:underline">live</span>
+            <CardTitle className="text-base">Real-time Metrics</CardTitle>
+            <span className="text-xs text-success animate-pulse">● live</span>
           </CardHeader>
           <CardContent className="space-y-4">
-            {recentActivity.length > 0 ? (
-              recentActivity.map((activity) => (
-                <div key={activity.id} className="flex items-start gap-3">
-                  <div className={`w-2 h-2 rounded-full mt-2 ${activity.type === 'completed' ? 'bg-success' : 'bg-warning'}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium">
-                      {activity.type === 'completed' ? `Order ${activity.order} Delivered` : `Order ${activity.order} Received`}
-                    </p>
-                    <p className="text-xs text-muted-foreground">{activity.driver}</p>
-                    <p className="text-xs text-muted-foreground">{activity.time}</p>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-sm text-muted-foreground text-center py-4">No recent activity</p>
-            )}
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Orders/Hour</span>
+              <span className="font-semibold">{ordersPerHour.toFixed(1)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Avg Wait Time</span>
+              <span className="font-semibold">{avgWaitTime.toFixed(1)} min</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Drivers Available</span>
+              <span className="font-semibold text-success">{realtimeMetrics?.drivers_available || 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Drivers Busy</span>
+              <span className="font-semibold text-primary">{realtimeMetrics?.drivers_busy || 0}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">On Break</span>
+              <span className="font-semibold text-warning">{realtimeMetrics?.drivers_on_break || 0}</span>
+            </div>
+            <div className="pt-4 border-t border-border">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Active Alerts</span>
+                <span className={`font-semibold ${activeAlerts > 0 ? 'text-destructive' : 'text-success'}`}>
+                  {activeAlerts}
+                </span>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
     </div>
   );
 }
-

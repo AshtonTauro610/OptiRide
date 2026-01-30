@@ -2,14 +2,20 @@ import { ApiOrder, ApiOrderStatus } from "./backend";
 
 export function mapApiStatusToUi(status) {
   switch (status) {
+    case "pending":
+      return { status: "pending", statusBadge: "Pending", pickupConfirmed: false, actionType: "pickup" };
+    case "offered":
+      return { status: "pending", statusBadge: "Awaiting Accept", pickupConfirmed: false, actionType: "pickup" };
     case "assigned":
       return { status: "assigned", statusBadge: "Awaiting Pickup", pickupConfirmed: false, actionType: "pickup" };
     case "picked_up":
       return { status: "assigned", statusBadge: "In Transit", pickupConfirmed: true, actionType: "delivery" };
     case "delivered":
       return { status: "completed", statusBadge: "Completed", pickupConfirmed: true, actionType: "delivery" };
+    case "cancelled":
+      return { status: "completed", statusBadge: "Cancelled", pickupConfirmed: false, actionType: "pickup" };
     default:
-      return { status: "pending", statusBadge: "Pending", pickupConfirmed: false, actionType: "pickup" };
+      return { status: "pending", statusBadge: "Unknown", pickupConfirmed: false, actionType: "pickup" };
   }
 }
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Float
+from sqlalchemy import Column, String, DateTime, ForeignKey, Float, Integer
 from sqlalchemy.orm import relationship
 from geoalchemy2 import Geometry
 from app.db.database import Base
@@ -44,6 +44,7 @@ class Order(Base):
     assigned_at = Column(DateTime)
     picked_up_at = Column(DateTime)
     delivered_at = Column(DateTime)
+    customer_rating = Column(Integer, nullable=True) # Remove
 
     # Relationships
     driver = relationship("Driver", back_populates="orders")

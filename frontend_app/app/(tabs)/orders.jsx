@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function OrdersScreen() {
   const router = useRouter();
@@ -46,8 +47,8 @@ export default function OrdersScreen() {
       .filter((o) =>
         q
           ? [o.orderNumber, o.restaurant, o.location, o.details?.customerName]
-              .filter(Boolean)
-              .some((v) => String(v).toLowerCase().includes(q))
+            .filter(Boolean)
+            .some((v) => String(v).toLowerCase().includes(q))
           : true,
       );
   }, [orders, activeTab, searchQuery]);
@@ -73,20 +74,22 @@ export default function OrdersScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.headerWrapper}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>My Orders</Text>
-          <View style={styles.headerIcons}>
-            <TouchableOpacity style={styles.iconButton}>
-              <Search color="#FFFFFF" size={20} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iconButton}>
-              <Bell color="#FFFFFF" size={20} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.iconButton}>
-              <User color="#FFFFFF" size={20} />
-            </TouchableOpacity>
+        <SafeAreaView edges={["top"]} style={styles.safeArea}>
+          <View style={styles.header}>
+            <Text style={styles.headerTitle}>My Orders</Text>
+            <View style={styles.headerIcons}>
+              <TouchableOpacity style={styles.iconButton}>
+                <Search color="#FFFFFF" size={20} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iconButton}>
+                <Bell color="#FFFFFF" size={20} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.iconButton}>
+                <User color="#FFFFFF" size={20} />
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
+        </SafeAreaView>
       </View>
 
       <View style={styles.tabsContainer}>
@@ -207,7 +210,10 @@ export default function OrdersScreen() {
                 {order.status === "assigned" && (
                   <TouchableOpacity
                     style={styles.navigateButton}
-                    onPress={() => router.push({ pathname: "/order-pickup", params: { orderId: order.id } })}
+                    onPress={() => {
+                      const pathname = order.actionType === "delivery" ? "/order-delivery" : "/order-pickup";
+                      router.push({ pathname, params: { orderId: order.id } });
+                    }}
                   >
                     <Text style={styles.navigateButtonText}>Navigate</Text>
                   </TouchableOpacity>
@@ -298,12 +304,15 @@ export default function OrdersScreen() {
     </View>
   );
 }
- 
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
   headerWrapper: {
+    backgroundColor: "#0b0f3d",
+  },
+  safeArea: {
     backgroundColor: "#0b0f3d",
   },
   header: {
