@@ -3,7 +3,6 @@ import { User, Lock, Loader2 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { useNavigate } from "react-router-dom";
 
-// UI Components
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,13 +19,11 @@ const LoginComponent = () => {
     const { login } = useAuth();
     const navigate = useNavigate();
 
-    // Login State
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [loginError, setLoginError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
 
-    // Forgot Password State
     const [forgotOpen, setForgotOpen] = useState(false);
     const [forgotEmail, setForgotEmail] = useState("");
     const [resetStep, setResetStep] = useState("email");
@@ -40,15 +37,12 @@ const LoginComponent = () => {
         setLoginError("");
         setIsLoading(true);
 
-        // Call the AuthContext login function
         const result = await login(email, password);
-
         if (result.success) {
-            // Navigate based on role
-            if (result.role === 'driver') {
-                navigate('/driver/dashboard');
-            } else {
+            if (result.role === 'administrator') {
                 navigate('/admin/dashboard');
+            } else {
+                setLoginError("Invalid credentials");
             }
         } else {
             setLoginError(result.message);
@@ -56,7 +50,6 @@ const LoginComponent = () => {
         setIsLoading(false);
     };
 
-    // --- Forgot Password Handlers (Kept from your original code) ---
     const resetForgotState = () => {
         setForgotEmail("");
         setVerificationCode("");
@@ -102,7 +95,6 @@ const LoginComponent = () => {
             return;
         }
         setResetError("");
-        // TODO: Connect this to backend API
         handleForgotOpenChange(false);
     };
 
@@ -131,7 +123,7 @@ const LoginComponent = () => {
                     <div className="relative">
                         <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                         <Input
-                            type="email" // Changed to Email for Firebase
+                            type="email" 
                             placeholder="EMAIL ADDRESS"
                             value={email}
                             onChange={(e) => setEmail(e.target.value)}

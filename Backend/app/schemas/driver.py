@@ -1,7 +1,9 @@
-from pydantic import BaseModel, Field, computed_field
-from typing import Optional
+from pydantic import BaseModel, Field, computed_field, field_validator
+from typing import Optional, Any
 from datetime import datetime
 from enum import Enum
+from geoalchemy2.shape import to_shape
+from geoalchemy2.elements import WKBElement
 
 class DriverStatus(str, Enum):
     AVAILABLE = "available"
@@ -90,6 +92,17 @@ class DriverResponse(BaseModel):
         fatigue_penalty = (self.fatigue_score or 0) * 2
         final_score =  base_score - alert_penalty - fatigue_penalty
         return max(0, min(final_score, 100))
+
+    @field_validator('location', mode='before')
+    @classmethod
+    def serialize_location(cls, v: Any) -> Optional[LocationSchema]:
+        if v is None:
+            return None
+        if isinstance(v, WKBElement) or hasattr(v, "desc"):
+             # to_shape handles WKBElement
+             point = to_shape(v)
+             return LocationSchema(latitude=point.y, longitude=point.x)
+        return v
 
     class Config:
         from_attributes = True

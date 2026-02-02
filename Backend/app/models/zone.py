@@ -24,6 +24,8 @@ class Zone(Base):
     area_km2 = Column(Float)
     population_density = Column(Float)
     restaurant_count = Column(Integer, default=0)
+
+    demands = relationship("Demand", back_populates="zone")
     
 class DemandForecast(Base):
     __tablename__ = "demand_forecasts"

@@ -87,7 +87,7 @@ class AnalyticsService:
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         
         orders_pending = self.db.query(Order).filter(Order.status == OrderStatus.pending.value).count()
-        orders_in_progress = self.db.query(Order).filter(Order.status.in_([OrderStatus.assigned.value, OrderStatus.picked_up.value, OrderStatus.in_transit.value])).count()
+        orders_in_progress = self.db.query(Order).filter(Order.status.in_([OrderStatus.assigned.value, OrderStatus.picked_up.value])).count()
         orders_completed_today = self.db.query(Order).filter(Order.status == OrderStatus.delivered.value, Order.delivered_at >= today_start).count()
         
         one_hour_ago = now - timedelta(hours=1)
@@ -103,7 +103,7 @@ class AnalyticsService:
             timestamp=now,
             drivers_online=sum(d_map.values()),
             drivers_available=d_map.get(DriverStatus.AVAILABLE.value, 0),
-            drivers_busy=d_map.get(DriverStatus.BUSY.value, 0) + d_map.get(DriverStatus.ON_DELIVERY.value, 0),
+            drivers_busy=d_map.get(DriverStatus.BUSY.value, 0),
             drivers_on_break=d_map.get(DriverStatus.ON_BREAK.value, 0),
             
             orders_pending=orders_pending,
