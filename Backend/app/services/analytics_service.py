@@ -846,6 +846,7 @@ class AnalyticsService:
         AnalyticsService._ml_models_cache = {}
 
     def _get_forecaster(self, zone_id: str):
+        print(f"[DEBUG] Loading forecaster for zone: {zone_id}")
         """Load and cache DemandForecaster for a zone."""
         if zone_id in AnalyticsService._ml_models_cache:
             return AnalyticsService._ml_models_cache[zone_id]
@@ -857,15 +858,32 @@ class AnalyticsService:
                 self._get_base_model_dir(), f'zone_{zone_id}'
             ))
             if not os.path.isdir(model_dir):
+                print(f"[DEBUG] Model dir not found for zone {zone_id}: {model_dir}")
                 AnalyticsService._ml_models_cache[zone_id] = None
                 return None
             forecaster.load_models(model_dir)
             if not forecaster.models:
+                print(f"[DEBUG] No models loaded for zone {zone_id} from {model_dir}")
                 AnalyticsService._ml_models_cache[zone_id] = None
                 return None
+            print(f"[DEBUG] Loaded models for zone {zone_id}: {list(forecaster.models.keys())}")
+            print(f"[DEBUG] Feature columns for zone {zone_id}: {getattr(forecaster, 'feature_columns', None)}")
+            # Print feature importances for each model if available
+            for model_name, model in forecaster.models.items():
+                if hasattr(model, 'feature_importances_'):
+                    print(f"[DEBUG] Feature importances for {model_name} in zone {zone_id}:")
+                    for col, imp in zip(forecaster.feature_columns, model.feature_importances_):
+                        print(f"    {col}: {imp:.4f}")
+                elif hasattr(model, 'coef_'):
+                    print(f"[DEBUG] Coefficients for {model_name} in zone {zone_id}:")
+                    for col, coef in zip(forecaster.feature_columns, model.coef_):
+                        print(f"    {col}: {coef:.4f}")
+                else:
+                    print(f"[DEBUG] No feature importances or coefficients for {model_name} in zone {zone_id}")
             AnalyticsService._ml_models_cache[zone_id] = forecaster
             return forecaster
-        except Exception:
+        except Exception as e:
+            print(f"[DEBUG] Exception loading forecaster for zone {zone_id}: {e}")
             AnalyticsService._ml_models_cache[zone_id] = None
             return None
 
@@ -982,6 +1000,7 @@ class AnalyticsService:
         f['distance_km'] = 0.0
         f['duration_min'] = 0.0
 
+        print(f"[DEBUG] Features for forecast_time {forecast_time}: {f}")
         return f
 
     def _batch_predict_all_zones(
@@ -999,6 +1018,7 @@ class AnalyticsService:
         for zone_id in zones:
             forecaster = self._get_forecaster(zone_id)
             if forecaster is None:
+                print(f"[DEBUG] No forecaster for zone {zone_id}, predictions will be zero.")
                 results[zone_id] = [(0.0, 0.0)] * n
                 continue
 
@@ -1014,11 +1034,13 @@ class AnalyticsService:
                     if col not in features_df.columns:
                         features_df[col] = 0
                 features_df = features_df[forecaster.feature_columns]
-
-                # Single batch prediction (vectorized)
+                
+                # print(f"[DEBUG] Predicting for zone {zone_id} with features shape {features_df.shape}")
                 preds, confs = forecaster.predict_ensemble_batch(features_df)
+                # print(f"[DEBUG] Predictions for zone {zone_id}: {preds}")
                 results[zone_id] = [(max(0, float(p)), float(c)) for p, c in zip(preds, confs)]
-            except Exception:
+            except Exception as e:
+                print(f"[DEBUG] Exception during prediction for zone {zone_id}: {e}")
                 results[zone_id] = [(0.0, 0.0)] * n
 
         return results
@@ -1030,22 +1052,27 @@ class AnalyticsService:
         """
         Compute scaling factor by comparing ML predictions to actual orders
         for ALL completed hours with data (not just last 3).
-        Only calibrates if we're looking at today's data.
+        Now calibrates for all dates, not just today.
         Returns factor clamped to [0.5, 4.0].
         """
-        if not is_today or local_now_hour < 1:
+        # For today, only use completed hours; for past days, use all 24
+        if is_today and local_now_hour < 1:
+            print(f"[DEBUG] Calibration: not enough hours for today, factor=1.0")
             return 1.0
 
         total_actual = 0
         total_predicted = 0.0
         hours_with_data = 0
 
-        # Scan all completed hours that have actual orders
-        for h in range(0, local_now_hour):
+        if is_today:
+            hour_range = range(0, local_now_hour)
+        else:
+            hour_range = range(0, 24)
+
+        for h in hour_range:
             actual = actual_map.get(h, 0)
             if actual == 0:
                 continue
-            # Sum ML predictions for this hour across zones
             predicted = sum(zone_preds.get(z, [(0, 0)] * 24)[h][0] for z in zones)
             if predicted <= 0:
                 continue
@@ -1053,23 +1080,36 @@ class AnalyticsService:
             total_predicted += predicted
             hours_with_data += 1
 
-        if hours_with_data < 2 or total_predicted == 0:
+        if hours_with_data < 2:
+            print(f"[DEBUG] Calibration: not enough data (hours_with_data={hours_with_data}), factor=1.0")
             return 1.0
+        
+        # If total predicted is very low, don't calibrate (avoid division by zero or huge factors)
+        if total_predicted < 5.0:
+             return 1.0
 
         factor = total_actual / total_predicted
-        return max(0.5, min(4.0, factor))
+        print(f"[DEBUG] Calibration: total_actual={total_actual}, total_predicted={total_predicted}, factor={factor}")
+        
+        # If actual is 0 and predicted is high (e.g. midnight spike), the factor will be 0.0.
+        # We must clamp it, but allow it to go low to suppress the spike.
+        # INCREASED CAP: Sparse data causes 8x underprediction. Allow scale up to 10.0.
+        return max(0.1, min(10.0, factor))
 
     def _apply_calibration(
         self, zone_preds: dict, factor: float
     ) -> dict:
         """Scale all predictions by the given calibration factor."""
         if abs(factor - 1.0) < 0.01:
+            print(f"[DEBUG] Calibration factor ~1.0, no scaling applied.")
             return zone_preds
+        print(f"[DEBUG] Applying calibration factor {factor} to all predictions.")
         calibrated = {}
         for zone_id, preds in zone_preds.items():
             calibrated[zone_id] = [
                 (round(p * factor, 2), c) for p, c in preds
             ]
+            print(f"[DEBUG] Calibrated predictions for zone {zone_id}: {calibrated[zone_id]}")
         return calibrated
 
     # ========================================
@@ -1251,6 +1291,7 @@ class AnalyticsService:
                 ft = ft - timedelta(days=1)
             forecast_times.append(ft)
 
+
         # Pre-fetch demand data (170h before earliest forecast to cover lags)
         data_start = min(forecast_times) - timedelta(hours=170)
         data_end = max(forecast_times) + timedelta(hours=1)
@@ -1271,12 +1312,32 @@ class AnalyticsService:
             hour_label = f"{h:02d}:00"
 
             # Sum zone predictions for city-wide total
-            predicted = round(sum(zone_preds.get(z, [(0, 0)] * 24)[h][0] for z in zones), 0)
+            raw_sum = 0
+            for z in zones:
+                p = zone_preds.get(z, [(0, 0)] * 24)[h][0]
+                # FILTER CHANGE: Removed per-zone noise gate (p < 0.5) because it was killing
+                # valid low-volume signals during morning ramp-up (e.g. 0.4 * 10 zones = 4 orders).
+                raw_sum += p
+            
+            predicted_val = raw_sum
+
+            # --- Layer 2: Time-of-Day Dampening (The "Midnight Fix") ---
+            # If strictly off-peak (00:00 - 05:00), demand should be minimal.
+            # We assume high predictions here are "phantom" noise from the model.
+            if h < 5:
+                # If sum is significant, crush it.
+                if predicted_val > 1.0:
+                    predicted_val *= 0.15 
+            
+            # --- Layer 3: Calibration Safety (prevent < 0) ---
+            predicted = max(0.0, round(predicted_val, 0))
 
             if is_today:
                 actual = actual_map.get(h, 0) if h <= local_now_hour else None
             else:
                 actual = actual_map.get(h, 0)
+
+            print(f"[DEBUG] Hour {hour_label}: actual={actual}, predicted={predicted}")
 
             if actual is not None:
                 total_actual += actual

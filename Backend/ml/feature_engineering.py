@@ -72,10 +72,18 @@ class FeatureEngineer:
     def _create_time_features(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
 
-        # Convert UTC timestamps to Dubai Local Time (+4)
-        # We assume index is UTC if naive (from DB)
-        # Using a fixed offset is safer than relying on system timezone
-        df['local_time'] = df.index + timedelta(hours=4)
+        # Robust Timezone Handling
+        # 1. Ensure Index is Datetime
+        if not pd.api.types.is_datetime64_any_dtype(df.index):
+             df.index = pd.to_datetime(df.index)
+
+        # 2. Handle Timezone Conversion
+        # If naive, assume UTC (as stored in DB) -> localize to UTC -> convert to Dubai
+        # If aware, convert directly to Dubai
+        if df.index.tz is None:
+             df['local_time'] = df.index.tz_localize('UTC').tz_convert('Asia/Dubai')
+        else:
+             df['local_time'] = df.index.tz_convert('Asia/Dubai')
 
         df['hour'] = df['local_time'].dt.hour
         df['day_of_week'] = df['local_time'].dt.dayofweek
@@ -179,8 +187,12 @@ class FeatureEngineer:
         features = {}
 
         # --- Time features (must match _create_time_features) ---
-        # Convert UTC forecast_time to Dubai Local Time (+4)
-        local_time = forecast_time + timedelta(hours=4)
+        # Robust Timezone Handling using Pandas
+        ts = pd.Timestamp(forecast_time)
+        if ts.tz is None:
+            local_time = ts.tz_localize('UTC').tz_convert('Asia/Dubai')
+        else:
+            local_time = ts.tz_convert('Asia/Dubai')
 
         features['hour'] = local_time.hour
         features['day_of_week'] = local_time.weekday()
