@@ -3,6 +3,105 @@ import { driverService } from '@/utils/services/driver.service';
 import { orderService } from '@/utils/services/order.service';
 import { safetyService } from '@/utils/services/safety.service';
 import { analyticsService } from '@/utils/services/analytics.service';
+import { allocationService } from '@/utils/services/allocation.service';
+
+
+export const useReallocateDriver = () => {
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const reallocate = useCallback(async (driverId) => {
+        try {
+            setLoading(true);
+            setError(null);
+            const result = await allocationService.reallocateDriver(driverId);
+            return result;
+        } catch (err) {
+            setError(err);
+            throw err;
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    return { reallocate, loading, error };
+};
+
+/**
+ * Hook for fetching current allocation status and zone metrics
+ */
+export const useAllocationStatus = () => {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const fetchStatus = useCallback(async () => {
+        try {
+            setLoading(true);
+            const result = await allocationService.getAllocationStatus();
+            setData(result);
+            setError(null);
+        } catch (err) {
+            setError(err);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchStatus();
+    }, [fetchStatus]);
+
+    return { data, loading, error, refetch: fetchStatus };
+};
+
+/**
+ * Hook for manual driver allocation to a specific zone
+ */
+export const useManualAllocate = () => {
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const manualAllocate = useCallback(async (driverId, zoneId) => {
+        try {
+            setLoading(true);
+            setError(null);
+            const result = await allocationService.manualAllocate(driverId, zoneId);
+            return result;
+        } catch (err) {
+            setError(err);
+            throw err;
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    return { manualAllocate, loading, error };
+};
+
+/**
+ * Hook for triggering initial fleet-wide allocation
+ */
+export const useInitialAllocation = () => {
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState(null);
+
+    const initialAllocation = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const result = await allocationService.initialAllocation();
+            return result;
+        } catch (err) {
+            setError(err);
+            throw err;
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    return { initialAllocation, loading, error };
+};
 // Driver hooks
 export const useDrivers = (skip = 0, limit = 10) => {
     const [data, setData] = useState(null);

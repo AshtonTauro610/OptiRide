@@ -1,6 +1,7 @@
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { OrdersProvider } from "@/contexts/OrdersContext";
 import { OrderNotificationProvider } from "@/contexts/OrderNotificationContext";
+import { AllocationNotificationProvider } from "@/contexts/AllocationNotificationContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { SensorProvider } from "@/contexts/SensorContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -83,11 +84,13 @@ export default function RootLayout() {
         <ThemeProvider>
           <OrdersProvider>
             <OrderNotificationProvider>
-              <SensorProvider>
-                <GestureHandlerRootView>
-                  <RootLayoutNav />
-                </GestureHandlerRootView>
-              </SensorProvider>
+              <AllocationNotificationProvider>
+                <SensorProvider>
+                  <GestureHandlerRootView>
+                    <RootLayoutNav />
+                  </GestureHandlerRootView>
+                </SensorProvider>
+              </AllocationNotificationProvider>
             </OrderNotificationProvider>
           </OrdersProvider>
         </ThemeProvider>

@@ -16,7 +16,7 @@ from app.schemas.driver import (
     DriverPerformanceStats, NearbyDriverResponse,
     ShiftStart, ShiftEnd, ShiftSummary, BreakRequest, DriverStatus, DutyStatus, TelemetryUpdate
 )
-
+from app.services.allocation_service import AllocationService
 
 class DriverService:
     def __init__(self, db: Session):
@@ -200,6 +200,12 @@ class DriverService:
         driver.status = new_status.value
         self.db.commit()
         self.db.refresh(driver)
+
+        # Trigger allocation if becoming available
+        if new_status == DriverStatus.AVAILABLE:
+            allocation_service = AllocationService(self.db)
+            allocation_service.allocate_driver(driver_id)
+
         return driver
     
     def update_duty_status(self, driver_id: str, duty_status: DutyStatus) -> Driver:
@@ -241,6 +247,14 @@ class DriverService:
 
         self.db.commit()
         self.db.refresh(driver)
+
+        # Trigger initial allocation
+        try:
+            allocation_service = AllocationService(self.db)
+            allocation_service.allocate_driver(driver.driver_id)
+        except Exception as e:
+            logger.error(f"Initial allocation failed: {e}")
+
         return driver
     
     def end_shift(self, driver_id: str, shift_end: ShiftEnd) -> ShiftSummary:

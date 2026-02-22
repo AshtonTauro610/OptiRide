@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import MapView, { Polygon } from 'react-native-maps';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
@@ -9,7 +9,8 @@ import { zones } from '@/mocks/zones';
 
 export default function ZoneChangeScreen() {
   const router = useRouter();
-  const newZone = zones.find(z => z.code === 'A3');
+  const { zoneId } = useLocalSearchParams();
+  const newZone = zones.find(z => z.code === zoneId) || zones.find(z => z.code === 'A3');
 
   return (
     <View style={styles.container}>
@@ -34,7 +35,7 @@ export default function ZoneChangeScreen() {
         ))}
       </MapView>
 
-      <TouchableOpacity 
+      <TouchableOpacity
         style={styles.closeButton}
         onPress={() => router.back()}
         activeOpacity={0.7}
@@ -46,19 +47,19 @@ export default function ZoneChangeScreen() {
         <Card style={styles.notificationCard}>
           <Text style={styles.title}>Zone Change</Text>
           <Text style={styles.message}>
-            Due to high demand you have been reassigned to Zone {newZone?.code}. 
+            Due to high demand you have been reassigned to Zone {newZone?.code}.
             Please proceed to Zone {newZone?.code} to continue accepting orders.
           </Text>
           <View style={styles.buttonRow}>
-            <Button 
-              title="Dismiss" 
-              onPress={() => router.back()} 
+            <Button
+              title="Dismiss"
+              onPress={() => router.back()}
               variant="secondary"
               style={styles.button}
             />
-            <Button 
-              title="Navigate" 
-              onPress={() => router.push('/zone-navigation')} 
+            <Button
+              title="Navigate"
+              onPress={() => router.push('/zone-navigation')}
               variant="primary"
               style={styles.button}
             />

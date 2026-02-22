@@ -82,6 +82,13 @@ class SocketManager:
             "driver_id": driver_id,
             "status": new_status
         }, room=f"driver_{driver_id}")
+
+    @staticmethod
+    async def notify_driver_allocation(driver_id: str, zone_id: str):
+        await sio_server.emit("driver_allocated", {
+            "driver_id": driver_id,
+            "zone_id": zone_id
+        }, room=f"driver_{driver_id}")
     
     # Safety alerts
     @staticmethod

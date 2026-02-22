@@ -8,7 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow, } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, } from "@/components/ui/dialog";
 import { DriverChatDialog } from "@/components/shared/DriverChatDialog";
-import { useDrivers, usePolling, useDriverPerformanceStats } from "@/utils/hooks/use-api";
+import { useDrivers, usePolling, useDriverPerformanceStats, useReallocateDriver, useAllocationStatus, useManualAllocate, useInitialAllocation } from "@/utils/hooks/use-api";
+import { toast } from "sonner";
 
 
 const getStatusColor = (status) => {
@@ -55,6 +56,7 @@ export function DriverMonitoring() {
   const [statusFilter, setStatusFilter] = useState("all-status");
   const [page, setPage] = useState(0);
   const limit = 20;
+  const [selectedManualZone, setSelectedManualZone] = useState("");
   // Fetch drivers from API
   const { data: driversData, refetch } = useDrivers(page * limit, limit);
 
@@ -62,6 +64,49 @@ export function DriverMonitoring() {
 
   // Fetch performance stats for selected driver
   const { data: driverStats } = useDriverPerformanceStats(selectedDriver?.driver_id);
+  const { reallocate, loading: isReallocating } = useReallocateDriver();
+  const { data: allocationData } = useAllocationStatus();
+  const { manualAllocate, loading: isManualAllocating } = useManualAllocate();
+  const { initialAllocation, loading: isInitialAllocating } = useInitialAllocation();
+
+  const handleInitialAllocation = async () => {
+    try {
+      await initialAllocation();
+      toast.success("Fleet distribution optimized successfully");
+      refetch(); // Refresh driver list
+    } catch (err) {
+      toast.error("Optimization failed: " + err.message);
+    }
+  };
+
+  const handleReallocate = async (driverId) => {
+    try {
+      await reallocate(driverId);
+      toast.success("Driver reallocated successfully");
+      refetch(); // Refresh driver list
+    } catch (err) {
+      toast.error("Failed to reallocate driver: " + err.message);
+    }
+  };
+
+  const handleManualAllocate = async (driverId) => {
+    if (!selectedManualZone) {
+      toast.error("Please select a zone");
+      return;
+    }
+    try {
+      await manualAllocate(driverId, selectedManualZone);
+      toast.success(`Driver allocated to ${selectedManualZone}`);
+      refetch();
+      setSelectedManualZone("");
+    } catch (err) {
+      toast.error("Allocation failed: " + err.message);
+    }
+  };
+
+  const zones = allocationData?.zones || [];
+  const selectedZoneData = zones.find(z => z.zone_id === selectedManualZone);
+
   const drivers = driversData?.drivers || [];
   const totalDrivers = driversData?.total || 0;
   const filteredDrivers = drivers.filter((driver) => {
@@ -87,6 +132,15 @@ export function DriverMonitoring() {
         <Badge className="bg-success/10 text-success hover:bg-success/20 border-0">
           {totalDrivers} Total Drivers
         </Badge>
+        <Button
+          onClick={handleInitialAllocation}
+          disabled={isInitialAllocating}
+          variant="outline"
+          className="border-primary text-primary hover:bg-primary/10 gap-2"
+        >
+          <TrendingUp className="w-4 h-4" />
+          {isInitialAllocating ? "Optimizing..." : "Optimize Fleet Distribution"}
+        </Button>
       </div>
     </div>
 
@@ -169,7 +223,7 @@ export function DriverMonitoring() {
               </TableCell>
               <TableCell>
                 <span className={`font-medium ${(driver.today_safety_score ?? 100) >= 80 ? 'text-success' :
-                    (driver.today_safety_score ?? 100) >= 50 ? 'text-warning' : 'text-destructive'
+                  (driver.today_safety_score ?? 100) >= 50 ? 'text-warning' : 'text-destructive'
                   }`}>
                   {(driver.today_safety_score ?? 100).toFixed(0)}/100
                 </span>
@@ -226,14 +280,24 @@ export function DriverMonitoring() {
                 </Badge>
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-foreground">Today's Safety Score</div>
-              <div className={`text-3xl font-bold ${
-                (driverStats?.today_safety_score ?? 100) >= 80 ? 'text-success' :
-                (driverStats?.today_safety_score ?? 100) >= 50 ? 'text-warning' : 'text-destructive'
-              }`}>
-                {driverStats?.today_safety_score?.toFixed(0) ?? "100"}/100
+            <div className="text-right flex flex-col items-end gap-2">
+              <div>
+                <div className="text-foreground">Today's Safety Score</div>
+                <div className={`text-3xl font-bold ${(driverStats?.today_safety_score ?? 100) >= 80 ? 'text-success' :
+                  (driverStats?.today_safety_score ?? 100) >= 50 ? 'text-warning' : 'text-destructive'
+                  }`}>
+                  {driverStats?.today_safety_score?.toFixed(0) ?? "100"}/100
+                </div>
               </div>
+              <Button
+                onClick={() => handleReallocate(selectedDriver.driver_id)}
+                disabled={isReallocating}
+                size="sm"
+                className="gap-2"
+              >
+                <TrendingUp className="w-4 h-4" />
+                {isReallocating ? "Reallocating..." : "Reallocate Now"}
+              </Button>
             </div>
           </div>
 
@@ -284,13 +348,64 @@ export function DriverMonitoring() {
             </Card>
           </div>
 
+          {/* Selective Allocation Control */}
+          <Card className="p-4 border-primary/20 bg-primary/5">
+            <h4 className="text-foreground mb-4 flex items-center gap-2 font-semibold">
+              <MapPin className="w-4 h-4 text-primary" />
+              Selective Zone Allocation
+            </h4>
+            <div className="flex flex-col md:flex-row gap-4 items-end">
+              <div className="flex-1 space-y-2">
+                <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Target Zone Selection</p>
+                <Select value={selectedManualZone} onValueChange={setSelectedManualZone}>
+                  <SelectTrigger className="w-full bg-background border-primary/20">
+                    <SelectValue placeholder="Select target zone..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {zones.map((z) => (
+                      <SelectItem key={z.zone_id} value={z.zone_id}>
+                        {z.zone_name} ({z.zone_id}) - Pressure: {z.demand_pressure}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                onClick={() => handleManualAllocate(selectedDriver.driver_id)}
+                disabled={isManualAllocating || !selectedManualZone}
+                className="bg-primary text-primary-foreground hover:bg-primary/90 min-w-[140px]"
+              >
+                {isManualAllocating ? "Allocating..." : "Confirm Allocation"}
+              </Button>
+            </div>
+
+            {selectedZoneData && (
+              <div className="mt-4 grid grid-cols-3 gap-2 p-3 bg-background/50 rounded-md border border-primary/10">
+                <div className="text-center">
+                  <p className="text-[10px] text-muted-foreground uppercase">Demand Score</p>
+                  <p className="font-bold text-primary">{selectedZoneData.demand_score}</p>
+                </div>
+                <div className="text-center border-x border-primary/10">
+                  <p className="text-[10px] text-muted-foreground uppercase">Current Drivers</p>
+                  <p className="font-bold text-foreground">{selectedZoneData.total_drivers}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-[10px] text-muted-foreground uppercase">Pressure</p>
+                  <p className={`font-bold ${selectedZoneData.demand_pressure > 2 ? 'text-destructive' : selectedZoneData.demand_pressure > 1 ? 'text-warning' : 'text-success'}`}>
+                    {selectedZoneData.demand_pressure}
+                  </p>
+                </div>
+              </div>
+            )}
+          </Card>
+
           {/* Device Status */}
           <Card className="p-4">
             <h4 className="text-foreground mb-4">Device Status</h4>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="flex items-center gap-3">
                 <Battery className={`w-5 h-5 ${(selectedDriver.battery_level ?? 100) > 50 ? "text-success" :
-                    (selectedDriver.battery_level ?? 100) > 20 ? "text-warning" : "text-destructive"
+                  (selectedDriver.battery_level ?? 100) > 20 ? "text-warning" : "text-destructive"
                   }`} />
                 <div>
                   <p className="text-muted-foreground">Battery</p>
@@ -299,7 +414,7 @@ export function DriverMonitoring() {
               </div>
               <div className="flex items-center gap-3">
                 <Wifi className={`w-5 h-5 ${selectedDriver.network_strength === 'Strong' ? "text-success" :
-                    selectedDriver.network_strength === 'Weak' ? "text-warning" : "text-muted-foreground"
+                  selectedDriver.network_strength === 'Weak' ? "text-warning" : "text-muted-foreground"
                   }`} />
                 <div>
                   <p className="text-muted-foreground">Network</p>
@@ -348,10 +463,9 @@ export function DriverMonitoring() {
               {/* Today's Stats - Primary */}
               <div className="flex items-center justify-between p-3 bg-muted rounded">
                 <span className="text-muted-foreground">Today's Safety Score</span>
-                <Badge className={`${
-                  (driverStats?.today_safety_score ?? 100) >= 80 ? 'bg-success/10 text-success' :
+                <Badge className={`${(driverStats?.today_safety_score ?? 100) >= 80 ? 'bg-success/10 text-success' :
                   (driverStats?.today_safety_score ?? 100) >= 50 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'
-                }`}>
+                  }`}>
                   {driverStats?.today_safety_score?.toFixed(0) ?? "100"}/100
                 </Badge>
               </div>
@@ -385,17 +499,16 @@ export function DriverMonitoring() {
                   {driverStats?.today_fatigue_alerts ?? 0}
                 </Badge>
               </div>
-              
+
               {/* 30-Day Averages - Secondary */}
               <div className="pt-2 mt-2 border-t border-border">
                 <p className="text-xs text-muted-foreground mb-2">30-Day Averages</p>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
                 <span className="text-muted-foreground">Avg Safety Score (30d)</span>
-                <Badge className={`${
-                  (driverStats?.avg_30d_safety_score ?? 100) >= 80 ? 'bg-success/10 text-success' :
+                <Badge className={`${(driverStats?.avg_30d_safety_score ?? 100) >= 80 ? 'bg-success/10 text-success' :
                   (driverStats?.avg_30d_safety_score ?? 100) >= 50 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'
-                }`}>
+                  }`}>
                   {driverStats?.avg_30d_safety_score?.toFixed(0) ?? "100"}/100
                 </Badge>
               </div>
@@ -403,7 +516,7 @@ export function DriverMonitoring() {
                 <span className="text-muted-foreground">Total Alerts (30d)</span>
                 <Badge variant="secondary">{driverStats?.total_30d_alerts ?? 0}</Badge>
               </div>
-              
+
               {/* Lifetime Stats */}
               <div className="pt-2 mt-2 border-t border-border">
                 <p className="text-xs text-muted-foreground mb-2">Lifetime Stats</p>
