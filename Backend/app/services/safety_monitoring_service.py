@@ -15,6 +15,7 @@ from app.schemas.sensor import (
     AccelerometerData, GyroscopeData
 )
 from app.schemas.alert import AlertCreate, AlertType, AlertSeverity
+from app.services.genai_service import GenAIService
 from app.core.kafka import kafka_producer
 
 class SafetyMonitoringService:
@@ -81,6 +82,19 @@ class SafetyMonitoringService:
         )
         results["alerts"] = alerts
 
+        safety_data = {
+            "fatigue_score": fatigue_analysis.fatigue_score,
+            "fatigue_alert_level": fatigue_analysis.alert_level,
+            "harsh_braking": movement_analysis.harsh_braking,
+            "harsh_acceleration": movement_analysis.harsh_acceleration,
+            "sharp_turn": movement_analysis.sharp_turn,
+            "sudden_impact": movement_analysis.sudden_impact,
+            "movement_risk_level": movement_analysis.risk_level,
+            "speed": batch.location_data.speed if batch.location_data else 0,
+        }
+        
+        results["genai_insights"] = GenAIService.generate_safety_insights(safety_data)
+        
         return results
     
     def analyze_fatigue(self, frame_data: str) -> FatigueAnalysisResult:
