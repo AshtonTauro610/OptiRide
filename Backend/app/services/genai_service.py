@@ -183,3 +183,103 @@ class GenAIService:
             insights.append("Operations appear stable. Monitor for changes.")
             
         return insights
+
+    @classmethod
+    def generate_driver_insights(cls, metrics: Dict[str, Any]) -> List[str]:
+        model = cls._get_model()
+        if not model:
+            return cls._fallback_driver_insights(metrics)
+        
+        try:
+            prompt = f"""
+            You are an AI assistant for a logistics fleet management system.
+
+            Analyze this driver's performance metrics and provide 1-2 concise, actionable insights for the fleet manager.
+
+            Driver Metrics:
+            - Orders Completed: {metrics.get('orders_completed', 0)}
+            - Orders Cancelled: {metrics.get('orders_cancelled', 0)}
+            - Total Earnings: AED {metrics.get('total_earnings', 0):.2f}
+            - Total Distance: {metrics.get('total_distance', 0):.1f} km
+            - Safety Alerts: {metrics.get('safety_alerts', 0)}
+            - Safety Score: {metrics.get('safety_score', 100)}/100
+
+            Rules:
+            1. Be direct and operational. No markdown, no bullet points, no numbering.
+            2. START directly with the first insight. No intro phrases.
+            3. Separate multiple insights with a newline.
+            4. Focus on the most critical issue first (safety > performance > earnings).
+            """
+            response = model.generate_content(prompt)
+            text = response.text.strip()
+            lines = [l.strip().lstrip("-•*").strip() for l in text.split("\n") if l.strip()]
+            filtered = [l for l in lines if not l.lower().startswith("here") and not l.endswith(":") and len(l) > 10]
+            return filtered[:2] if filtered else cls._fallback_driver_insights(metrics)
+        except Exception as e:
+            logger.error(f"Error generating driver insights: {e}")
+            return cls._fallback_driver_insights(metrics)
+
+
+    @staticmethod
+    def _fallback_driver_insights(metrics: Dict[str, Any]) -> List[str]:
+        insights = []
+        if metrics.get('safety_score', 100) < 80:
+            insights.append(f"Safety score is {metrics.get('safety_score')}/100 with {metrics.get('safety_alerts')} alerts. Review driving behavior immediately.")
+        if metrics.get('orders_cancelled', 0) > metrics.get('orders_completed', 1) * 0.2:
+            insights.append("High cancellation rate detected. Investigate root cause.")
+        if not insights:
+            insights.append("Driver performance is within normal range.")
+        return insights
+    
+    @classmethod
+    def generate_safety_insights(cls, safety_data: Dict[str, Any]) -> List[str]:
+        model = cls._get_model()
+        if not model:
+            return cls._fallback_safety_insights(safety_data)
+        
+        try:
+            prompt = f"""
+            You are an AI safety advisor for a food delivery fleet.
+
+            Analyze the following real-time safety event data and provide 1-2 concise, actionable recommendations for the fleet manager or driver.
+
+            Safety Data:
+            - Fatigue Score: {safety_data.get('fatigue_score', 0):.2f}/1.0 (alert level: {safety_data.get('fatigue_alert_level', 'none')})
+            - Harsh Braking: {safety_data.get('harsh_braking', False)}
+            - Harsh Acceleration: {safety_data.get('harsh_acceleration', False)}
+            - Sharp Turn: {safety_data.get('sharp_turn', False)}
+            - Sudden Impact: {safety_data.get('sudden_impact', False)}
+            - Movement Risk Level: {safety_data.get('movement_risk_level', 'low')}
+            - Speed (km/h): {safety_data.get('speed', 0)}
+
+            Rules:
+            1. Be direct and urgent if risk is high. No markdown, no bullet points, no numbering.
+            2. START directly with the first recommendation. No intro phrases.
+            3. Separate multiple recommendations with a newline.
+            4. Prioritize: sudden impact > fatigue > harsh driving > speeding.
+            """
+
+            response = model.generate_content(prompt)
+            text = response.text.strip()
+            lines = [l.strip().lstrip("-•*").strip() for l in text.split("\n") if l.strip()]
+            filtered = [l for l in lines if not l.lower().startswith("here") and not l.endswith(":") and len(l) > 10]
+            return filtered[:2] if filtered else cls._fallback_safety_insights(safety_data)
+        
+        except Exception as e:
+            logger.error(f"Error generating safety insights: {e}")
+            return cls._fallback_safety_insights(safety_data)
+        
+    @staticmethod
+    def _fallback_safety_insights(safety_data: Dict[str, Any]) -> List[str]:
+        insights = []
+        if safety_data.get('sudden_impact'):
+            insights.append("Sudden impact detected. Contact driver immediately and assess for accident.")
+        if safety_data.get('fatigue_alert_level') == 'critical':
+            insights.append("Critical fatigue detected. Driver must stop and rest before continuing.")
+        elif safety_data.get('fatigue_alert_level') == 'warning':
+            insights.append("Fatigue warning detected. Recommend driver take a short break.")
+        if safety_data.get('movement_risk_level') == 'high' and not safety_data.get('sudden_impact'):
+            insights.append("Multiple harsh driving events detected. Remind driver of safe driving protocols.")
+        if not insights:
+            insights.append("No critical safety issues detected. Driver is operating normally.")
+        return insights
