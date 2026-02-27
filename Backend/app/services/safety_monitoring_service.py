@@ -1,3 +1,5 @@
+from geoalchemy2.shape import to_shape
+import asyncio
 import cv2
 import numpy as np
 import base64
@@ -5,17 +7,23 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+import logging
 import math
 from geoalchemy2.functions import ST_Distance, ST_MakePoint, ST_SetSRID
 from geoalchemy2.elements import WKTElement
 from app.models.sensor_record import SensorRecord
 from app.models.alert import Alert
+from app.services.order_service import OrderService
 from app.schemas.sensor import (
     SensorDataBatch, FatigueAnalysisResult, MovementAnalysisResult, 
     AccelerometerData, GyroscopeData
 )
 from app.schemas.alert import AlertCreate, AlertType, AlertSeverity
 from app.core.kafka import kafka_producer
+from app.core.socket_manager import socket_manager, emit_sync
+
+logger = logging.getLogger(__name__)
+active_emergencies = {}
 
 class SafetyMonitoringService:
     def __init__(self, db: Session):
@@ -441,6 +449,64 @@ class SafetyMonitoringService:
                     "acknowledged": alert.acknowledged,
                     "timestamp": str(datetime.now())
                 })
+
+        if any(a.severity == AlertSeverity.CRITICAL.value for a in alerts):
+            if driver_id not in active_emergencies:
+                active_emergencies[driver_id] = "ACTIVE"
+                asyncio.create_task(self._emergency_countdown(driver_id, location_data.latitude, location_data.longitude))
+    
         return alerts
     
+    async def _emergency_countdown(self, driver_id : str, lat: float, lng: float):
+        logger.info(f"Starting 60s emergency countdown for driver {driver_id}")
+
+        await socket_manager.notify_safety_alert(driver_id, {
+            "type" : "CRASH_DETECTED",
+            "message" : "Crash detected! Are you okay? Emergency services will be called in 60s.",
+            "timeout_seconds" : 60
+        })
+
+        await asyncio.sleep(60)
+
+        if active_emergencies.get(driver_id) == "ACTIVE":
+            logger.error(f"Driver {driver_id} is unresponsive. Executing SOS protocol!")
+            self.execute_sos_protocol(driver_id, lat, lng)
+            active_emergencies.pop(driver_id, None)
+        
+    def execute_sos_protocol(self, driver_id: str, lat: float, lng: float):
+        logger.critical(f"CALLING EMERGENCY SERVICES FOR DRIVER {driver_id} AT {lat}, {lng}")
+        emit_sync(socket_manager.broadcast_to_zone("admin_dashboard", "emergency_dispatch", {
+            "driver_id": driver_id,
+            "latitude": lat,
+            "longitude": lng,
+            "message": "URGENT: Driver is unresponsive. Executing SOS protocol!"
+        }))
+
+        try:
+            order_service = OrderService(self.db)
+            order_service.handle_driver_emergency(driver_id, lat, lng)
+        except Exception as e:
+            logger.error(f"Failed to recover fleet during emergency: {e}")
     
+    def resolve_emergency(self, driver_id: str, status: str):
+        if driver_id not in active_emergencies:
+            return
+        
+        if status == "ok":
+            logger.info(f"Driver {driver_id} is responsive. Resolving emergency.")
+            active_emergencies.pop(driver_id, None)
+            
+            return { "message" : "Driver is responsive. Resolving emergency."}
+        elif status == "sos":
+            logger.critical(f"Driver {driver_id} requested SOS. Executing SOS protocol!")
+
+            active_emergencies.pop(driver_id, None)
+            driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
+            lat, lng = (0.0, 0.0)
+
+            if driver and driver.location:
+                shape = to_shape(driver.location)
+                lat, lng = shape.y, shape.x
+            
+            self.execute_sos_protocol(driver_id, lat, lng)
+            return { "message" : "SOS protocol engaged immediately."}

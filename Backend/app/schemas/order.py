@@ -65,18 +65,20 @@ class OrderResponse(BaseModel):
     restaurant_name: str
     restaurant_contact: str
     price: float
-    estimated_distance_km: Optional[float] = None
-    estimated_duration_min: Optional[float] = None
     delivery_fee: Optional[float] = None
-    estimated_pickup_time: Optional[datetime] = None
-    estimated_dropoff_time: Optional[datetime] = None
-    actual_distance_km: Optional[float] = None
-    actual_duration_min: Optional[float] = None
+    distance_km: Optional[float] = None
+    duration_min: Optional[float] = None
+    pickup_time: Optional[datetime] = None
+    dropoff_time: Optional[datetime] = None
+    route_polyline: Optional[str] = None
+    pickup_zone: Optional[str] = None
+    dropoff_zone: Optional[str] = None
     assignment_id: Optional[str] = None
     created_at: datetime
     assigned_at: Optional[datetime] = None
     picked_up_at: Optional[datetime] = None
     delivered_at: Optional[datetime] = None
+    optimized_sequence: Optional[List[str]] = None
 
     class Config:
         from_attributes = True

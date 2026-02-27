@@ -7,6 +7,7 @@ export const authService = {
             return response.data;
         }
         catch (error) {
+            console.error("AuthService.createUser error:", error);
             throw handleApiError(error);
         }
     },
@@ -25,9 +26,10 @@ export const authService = {
         try {
             const response = await apiClient.post('/auth/login', tokenData);
             // Store token and user data
-            if (response.data.access_token) {
-                localStorage.setItem('auth_token', response.data.access_token);
-                localStorage.setItem('user', JSON.stringify(response.data.user));
+            if (response.data.token && response.data.token.token) {
+                localStorage.setItem('optiride_token', response.data.token.token);
+                localStorage.setItem('optiride_user', JSON.stringify(response.data.user));
+                localStorage.setItem('optiride_login_time', Date.now().toString());
             }
             return response.data;
         }
@@ -39,13 +41,15 @@ export const authService = {
     async logout() {
         try {
             await apiClient.post('/auth/logout');
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('user');
+            localStorage.removeItem('optiride_token');
+            localStorage.removeItem('optiride_user');
+            localStorage.removeItem('optiride_login_time');
         }
         catch (error) {
             // Always clear local storage on logout attempt
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('user');
+            localStorage.removeItem('optiride_token');
+            localStorage.removeItem('optiride_user');
+            localStorage.removeItem('optiride_login_time');
             throw handleApiError(error);
         }
     },
@@ -61,12 +65,12 @@ export const authService = {
     },
     // Get stored user from localStorage
     getStoredUser() {
-        const userStr = localStorage.getItem('user');
+        const userStr = localStorage.getItem('optiride_user');
         return userStr ? JSON.parse(userStr) : null;
     },
     // Check if user is authenticated
     isAuthenticated() {
-        return !!localStorage.getItem('auth_token');
+        return !!localStorage.getItem('optiride_token');
     },
     // Check if user is admin
     isAdmin() {

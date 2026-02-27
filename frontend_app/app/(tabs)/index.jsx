@@ -38,6 +38,7 @@ if (Platform.OS !== 'web') {
 }
 
 import { useSensors } from "@/contexts/SensorContext";
+import { useAllocationNotification } from "@/contexts/AllocationNotificationContext";
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -73,8 +74,7 @@ export default function HomeScreen() {
   const shiftStartTime = formatTime(driverProfile?.shift_start_time) || formatTime(DEFAULT_SHIFT.start);
   const shiftEndTime = formatTime(driverProfile?.shift_end_time) || formatTime(DEFAULT_SHIFT.end);
 
-  // HARDCODED: Assigned zone - no backend endpoint for zone assignments
-  const assignedZoneCode = "A3";
+  const { newZone: reassignedZoneId } = useAllocationNotification();
 
   useEffect(() => {
     loadData();
@@ -105,10 +105,9 @@ export default function HomeScreen() {
     }
   };
 
-  // Get zone data from hardcoded zones based on zone code from API
   const currentZoneCode = driverProfile?.current_zone || "A1";
   const currentZone = zones.find((z) => z.code === currentZoneCode);
-  const assignedZone = zones.find((z) => z.code === assignedZoneCode);
+  const reassignedZone = reassignedZoneId ? zones.find((z) => z.code === reassignedZoneId) : null;
 
   // Today's stats
   const todaysDeliveries = performanceStats?.today_orders || 0;
@@ -197,7 +196,7 @@ export default function HomeScreen() {
         </View>
 
         <TouchableOpacity
-          onPress={() => router.push("/zone-change")}
+          onPress={() => router.push("/(tabs)/map")}
           activeOpacity={0.9}
         >
           <Card style={styles.zoneCard}>
@@ -251,24 +250,33 @@ export default function HomeScreen() {
           </Card>
         </TouchableOpacity>
 
-        {/* HARDCODED: Assigned zone - no backend endpoint for zone reassignment */}
-        <Card style={styles.assignedCard}>
-          <View style={styles.zoneHeader}>
-            <TrendingUpIcon size={20} color={theme.colors.error} />
-            <Text style={styles.zoneTitle}>Assigned Zone</Text>
-          </View>
-          <View style={styles.assignedContent}>
-            <Text style={styles.assignedZoneCode}>{assignedZone?.code}</Text>
-            <StatusBadge
-              status={assignedZone?.demand || "high"}
-              label={`${assignedZone?.demand} demand - Reassigned`}
-            />
-          </View>
-          <Text style={styles.assignedNote}>
-            Due to high demand, you have been reassigned to Zone{" "}
-            {assignedZone?.code}
-          </Text>
-        </Card>
+        {reassignedZone && (
+          <TouchableOpacity
+            onPress={() => router.push({
+              pathname: '/zone-change',
+              params: { zoneId: reassignedZoneId },
+            })}
+            activeOpacity={0.9}
+          >
+            <Card style={styles.assignedCard}>
+              <View style={styles.zoneHeader}>
+                <TrendingUpIcon size={20} color={theme.colors.error} />
+                <Text style={styles.zoneTitle}>Zone Reassignment</Text>
+              </View>
+              <View style={styles.assignedContent}>
+                <Text style={styles.assignedZoneCode}>{reassignedZone.code}</Text>
+                <StatusBadge
+                  status={reassignedZone.demand || "high"}
+                  label={`${reassignedZone.demand || 'high'} demand - Reassigned`}
+                />
+              </View>
+              <Text style={styles.assignedNote}>
+                Due to high demand, you have been reassigned to Zone{" "}
+                {reassignedZone.code}. Tap to navigate.
+              </Text>
+            </Card>
+          </TouchableOpacity>
+        )}
 
         <Card style={styles.shiftCard}>
           <View style={styles.zoneHeader}>
@@ -321,7 +329,7 @@ export default function HomeScreen() {
           >
             <Coffee size={20} color="#FFFFFF" />
             <Text style={styles.breakButtonText}>
-              {isOnBreak 
+              {isOnBreak
                 ? `On Break: ${Math.floor(breakDuration / 60)}:${(breakDuration % 60).toString().padStart(2, '0')}`
                 : "Take a Break"}
             </Text>

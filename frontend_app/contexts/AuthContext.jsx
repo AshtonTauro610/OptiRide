@@ -1,10 +1,13 @@
 import createContextHook from "@nkzw/create-context-hook";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useState, useRef } from "react";
+import { DeviceEventEmitter } from "react-native";
 import { signInWithEmailAndPassword, signOut, onIdTokenChanged } from "firebase/auth";
 
 import { getFirebaseAuth } from "@/lib/firebase";
 import { fetchCurrentUser } from "@/services/auth";
+import { fetchDriverProfile } from "@/services/driver";
+import { joinDriverRoom } from "@/services/socket";
 
 const STORAGE_KEY = "authToken";
 const STORAGE_KEY_EXPIRY = "authTokenExpiry";
@@ -65,7 +68,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     try {
       const expiryStr = await AsyncStorage.getItem(STORAGE_KEY_EXPIRY);
       if (!expiryStr) return true;
-      
+
       const expiry = new Date(expiryStr);
       return new Date() > expiry;
     } catch {
@@ -126,7 +129,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
         // Try to refresh the token first (in case it's expired)
         const auth = getFirebaseAuth();
         let validToken = storedToken;
-        
+
         if (auth?.currentUser) {
           try {
             validToken = await auth.currentUser.getIdToken(true);
@@ -137,15 +140,25 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
         }
 
         setToken(validToken);
-        const profile = await fetchCurrentUser(validToken);
-        
+        let profile = await fetchCurrentUser(validToken);
+
         // Validate that the user is a driver
         if (profile.user_type !== 'driver') {
           throw new Error('This app is for drivers only.');
         }
-        
+
+        try {
+          const driverProfile = await fetchDriverProfile(validToken);
+          profile = { ...profile, ...driverProfile };
+        } catch (e) {
+          console.warn("Could not fetch driver profile during restoreSession", e);
+        }
+
         setUser(profile);
         startTokenRefresh();
+
+        // Join socket room for real-time events
+        if (profile.driver_id) joinDriverRoom(profile.driver_id);
       }
     } catch (err) {
       console.error("Failed to restore auth session", err);
@@ -202,18 +215,28 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
         console.error("Failed to fetch user profile:", apiError);
         throw new Error('Unable to connect to server. Please check your internet connection.');
       }
-      
+
       // Validate that the user is a driver - this app is for drivers only
       if (profile.user_type !== 'driver') {
         throw new Error('This app is for drivers only. Please use the appropriate app for your role.');
       }
-      
+
+      try {
+        const driverProfile = await fetchDriverProfile(idToken);
+        profile = { ...profile, ...driverProfile };
+      } catch (e) {
+        console.warn("Could not fetch driver profile during login", e);
+      }
+
       // Only store token and set state AFTER validation passes
       await AsyncStorage.setItem(STORAGE_KEY, idToken);
       await setSessionExpiry(); // Set 15-day session expiry
       setToken(idToken);
       setUser(profile);
-      startTokenRefresh(); // Start periodic token refresh
+      startTokenRefresh();
+
+      // Join socket room for real-time events
+      if (profile.driver_id) joinDriverRoom(profile.driver_id);
 
       return profile;
     } catch (err) {
@@ -242,6 +265,25 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       setUser(null);
     }
   }, [stopTokenRefresh]);
+
+  useEffect(() => {
+    const authListener = DeviceEventEmitter.addListener('auth_error_401', async () => {
+      console.log("Interceptor caught 401 error. Forcing token refresh...");
+      if (!getFirebaseAuth()?.currentUser) {
+        logout();
+        return;
+      }
+      const newToken = await refreshToken();
+      if (!newToken) {
+        console.log("Token refresh failed. Forcing logout.");
+        logout();
+      }
+    });
+
+    return () => {
+      authListener.remove();
+    };
+  }, [refreshToken, logout]);
 
   return {
     token,

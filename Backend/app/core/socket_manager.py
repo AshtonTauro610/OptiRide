@@ -4,7 +4,7 @@ import asyncio
 
 sio_server = socketio.AsyncServer(
     async_mode='asgi',
-    cors_allowed_origins=['*']
+    cors_allowed_origins='*'
 )
 
 sio_app = socketio.ASGIApp(
@@ -53,6 +53,10 @@ class SocketManager:
         await sio_server.emit("new_order", order_data, room=f"driver_{driver_id}")
     
     @staticmethod
+    async def notify_order_offer(driver_id: str, order_data: Dict[str, Any]):
+        await sio_server.emit("order_offer", order_data, room=f"driver_{driver_id}")
+    
+    @staticmethod
     async def notify_order_accepted(order_id: str, driver_id: str, driver_name: str):
         await sio_server.emit("order_accepted", {
             "order_id": order_id,
@@ -84,11 +88,19 @@ class SocketManager:
         }, room=f"driver_{driver_id}")
 
     @staticmethod
-    async def notify_driver_allocation(driver_id: str, zone_id: str):
-        await sio_server.emit("driver_allocated", {
+    async def notify_driver_allocation(driver_id: str, zone_id: str, zone_lat: float = None, zone_lon: float = None, zone_name: str = None):
+        payload = {
             "driver_id": driver_id,
             "zone_id": zone_id
-        }, room=f"driver_{driver_id}")
+        }
+        if zone_lat is not None:
+            payload["latitude"] = zone_lat
+        if zone_lon is not None:
+            payload["longitude"] = zone_lon
+        if zone_name is not None:
+            payload["zone_name"] = zone_name
+            
+        await sio_server.emit("driver_allocated", payload, room=f"driver_{driver_id}")
     
     # Safety alerts
     @staticmethod
@@ -103,6 +115,14 @@ class SocketManager:
     @staticmethod
     async def broadcast_new_order_to_zone(zone_id: str, order_data: Dict[str, Any]):
         await sio_server.emit("zone_new_order", order_data, room=f"zone_{zone_id}")
+    
+    @staticmethod
+    async def notify_driver_assignment(driver_id: str, assignment_data: Dict[str, Any]):
+        await sio_server.emit("driver_assigned", assignment_data, room=f"driver_{driver_id}")
+
+    @staticmethod
+    async def notify_order_offer_expired(driver_id: str, order_id: str):
+        await sio_server.emit("order_offer_expired", {"order_id": order_id}, room=f"driver_{driver_id}")
 
 socket_manager = SocketManager()
 

@@ -61,10 +61,6 @@ def get_current_admin_head(
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
 ) -> Administrator:
-    """
-    Dependency to check if the current user is an admin head (access_level >= 2).
-    Admin heads can create both drivers and admins.
-    """
     if current_user.user_type != 'administrator':
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -78,10 +74,10 @@ def get_current_admin_head(
             detail="Administrator profile not found"
         )
     
-    if admin.access_level < 2:
+    if admin.access_level < 3:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions - admin head access required"
+            detail="Not enough permissions - senior admin head access required"
         )
     
     return admin

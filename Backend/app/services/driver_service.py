@@ -158,11 +158,11 @@ class DriverService:
 
         query = self.db.query(
             Driver,
-            ST_Distance(Driver.location, point_wkt).label('distance'),
+            ST_Distance(Driver.location, point_wkt, True).label('distance'),
             ST_Y(Driver.location).label('latitude'),
             ST_X(Driver.location).label('longitude')
         ).filter(
-            ST_Distance(Driver.location, point_wkt) <= radius_meters
+            ST_Distance(Driver.location, point_wkt, True) <= radius_meters
         )
 
         if status:

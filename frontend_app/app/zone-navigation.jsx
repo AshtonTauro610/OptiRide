@@ -1,9 +1,10 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useState, useEffect, useMemo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeftIcon } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
-import { zones } from '@/mocks/zones';
+import { fetchRouteDirections } from '@/services/route';
+import * as Location from 'expo-location';
 
 // Conditionally import MapView for native platforms
 let MapView, Polyline, Marker, PROVIDER_GOOGLE;
@@ -17,13 +18,72 @@ if (Platform.OS !== 'web') {
 
 export default function ZoneNavigationScreen() {
   const router = useRouter();
-  const targetZone = zones.find(z => z.code === 'A3');
+  const params = useLocalSearchParams();
+  const zoneName = params.zoneName || 'Target Zone';
+  const zoneLat = parseFloat(params.zoneLat) || 25.1852;
+  const zoneLng = parseFloat(params.zoneLng) || 55.2721;
 
-  const routeCoordinates = [
-    { latitude: 25.2048, longitude: 55.2708 },
-    { latitude: 25.1950, longitude: 55.2765 },
-    { latitude: 25.1852, longitude: 55.2721 },
-  ];
+  const [driverLocation, setDriverLocation] = useState(null);
+  const [routeCoords, setRouteCoords] = useState([]);
+  const [routeInfo, setRouteInfo] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const zoneDestination = { latitude: zoneLat, longitude: zoneLng };
+
+  // Get driver location
+  useEffect(() => {
+    const getLocation = async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+          setDriverLocation({
+            latitude: location.coords.latitude,
+            longitude: location.coords.longitude,
+          });
+        }
+      } catch (error) {
+        console.error('Error getting location:', error);
+      }
+    };
+    getLocation();
+  }, []);
+
+  // Fetch real route when driver location is available
+  useEffect(() => {
+    const fetchRoute = async () => {
+      if (!driverLocation) return;
+      setIsLoading(true);
+      try {
+        const result = await fetchRouteDirections(driverLocation, zoneDestination);
+        if (result) {
+          setRouteCoords(result.coordinates || []);
+          setRouteInfo({ distance: result.distance, duration: result.duration });
+        }
+      } catch (error) {
+        console.error('Error fetching zone route:', error);
+        // Fallback to straight line
+        setRouteCoords([driverLocation, zoneDestination]);
+      }
+      setIsLoading(false);
+    };
+    fetchRoute();
+  }, [driverLocation]);
+
+  const initialRegion = useMemo(() => {
+    if (driverLocation) {
+      return {
+        latitude: (driverLocation.latitude + zoneLat) / 2,
+        longitude: (driverLocation.longitude + zoneLng) / 2,
+        latitudeDelta: Math.abs(driverLocation.latitude - zoneLat) * 2 + 0.02,
+        longitudeDelta: Math.abs(driverLocation.longitude - zoneLng) * 2 + 0.02,
+      };
+    }
+    return { latitude: zoneLat, longitude: zoneLng, latitudeDelta: 0.05, longitudeDelta: 0.05 };
+  }, [driverLocation, zoneLat, zoneLng]);
+
+  const distanceText = routeInfo?.distance ? `${routeInfo.distance.toFixed(1)} km` : 'Calculating...';
+  const durationText = routeInfo?.duration ? `${Math.round(routeInfo.duration)} min` : '';
 
   // Web fallback
   if (Platform.OS === 'web') {
@@ -33,7 +93,7 @@ export default function ZoneNavigationScreen() {
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <ArrowLeftIcon size={24} color="#ffffff" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Navigate to Zone {targetZone?.code}</Text>
+          <Text style={styles.headerTitle}>Navigate to {zoneName}</Text>
         </View>
         <View style={styles.webPlaceholder}>
           <Text style={styles.webPlaceholderText}>🗺️ Map not available on web</Text>
@@ -48,39 +108,43 @@ export default function ZoneNavigationScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <ArrowLeftIcon size={24} color="#ffffff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Navigate to Zone {targetZone?.code}</Text>
+        <Text style={styles.headerTitle}>Navigate to {zoneName}</Text>
+        {isLoading && <ActivityIndicator size="small" color="#ffffff" style={{ marginLeft: 10 }} />}
       </View>
 
       <MapView
         provider={PROVIDER_GOOGLE}
         style={styles.map}
-        initialRegion={{
-          latitude: 25.1950,
-          longitude: 55.2735,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        }}
+        initialRegion={initialRegion}
+        showsUserLocation={true}
+        showsMyLocationButton={true}
       >
-        <Polyline
-          coordinates={routeCoordinates}
-          strokeColor={theme.colors.accent}
-          strokeWidth={4}
-        />
+        {routeCoords.length > 0 && (
+          <Polyline
+            coordinates={routeCoords}
+            strokeColor={theme.colors.accent}
+            strokeWidth={5}
+          />
+        )}
+        {driverLocation && (
+          <Marker
+            coordinate={driverLocation}
+            title="Your Location"
+            pinColor="#3B82F6"
+          />
+        )}
         <Marker
-          coordinate={routeCoordinates[0]}
-          title="Your Location"
-          pinColor={theme.colors.success}
-        />
-        <Marker
-          coordinate={routeCoordinates[routeCoordinates.length - 1]}
-          title={`Zone ${targetZone?.code}`}
+          coordinate={zoneDestination}
+          title={zoneName}
           pinColor={theme.colors.error}
         />
       </MapView>
 
       <View style={styles.infoCard}>
-        <Text style={styles.infoTitle}>2.5 km away</Text>
-        <Text style={styles.infoSubtitle}>Estimated time: 8 minutes</Text>
+        <Text style={styles.infoTitle}>{distanceText}</Text>
+        <Text style={styles.infoSubtitle}>
+          {durationText ? `Estimated time: ${durationText}` : 'Calculating route...'}
+        </Text>
       </View>
     </View>
   );
@@ -105,6 +169,7 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.lg,
     fontWeight: '600',
     color: '#ffffff',
+    flex: 1,
   },
   map: {
     flex: 1,

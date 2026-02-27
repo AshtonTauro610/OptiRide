@@ -7,6 +7,8 @@ import { submitSensorData } from "@/services/safety";
 import * as Battery from "expo-battery";
 import * as Network from "expo-network";
 import { updateDriverLocation, updateDriverStatus, startShift, endShift, updateTelemetry } from "@/services/driver";
+import { useRouter } from "expo-router";
+import socket from "@/services/socket";
 
 // Thresholds for event detection
 const THRESHOLDS = {
@@ -28,10 +30,27 @@ const SensorContext = createContext(null);
 
 export function SensorProvider({ children }) {
     const { token, user } = useAuth();
+    const router = useRouter();
     const [isMonitoring, setIsMonitoring] = useState(false);
     const [isOnline, setIsOnline] = useState(false);
     const [sessionId, setSessionId] = useState(null);
     const isMonitoringRef = useRef(false); // Use ref to track monitoring state for checks
+
+    // Safety Alert Socket Listener
+    useEffect(() => {
+        const handleSafetyAlert = (alertData) => {
+            console.log("[Sockets] Received safety_alert:", alertData);
+            if (alertData && alertData.alert_type === "CRITICAL_CRASH") {
+                router.push('/fall-detection');
+            }
+        };
+
+        socket.on("safety_alert", handleSafetyAlert);
+
+        return () => {
+            socket.off("safety_alert", handleSafetyAlert);
+        };
+    }, [router]);
 
     // Real-time sensor values
     const [currentSpeed, setCurrentSpeed] = useState(0);
@@ -66,12 +85,69 @@ export function SensorProvider({ children }) {
     const [breakDuration, setBreakDuration] = useState(0);
     const breakIntervalRef = useRef(null);
 
-    // Sync isOnline state with driver profile on load
+    // Auto-online on login: start shift if driver is offline
+    const hasAutoStarted = useRef(false);
     useEffect(() => {
-        if (user?.status) {
-            setIsOnline(user.status === "available" || user.status === "busy");
+        if (!user || !token || hasAutoStarted.current) return;
+
+        const isAlreadyOnline = user.status === "available" || user.status === "busy";
+        if (isAlreadyOnline) {
+            setIsOnline(true);
+            hasAutoStarted.current = true;
+            return;
         }
-    }, [user]);
+
+        // Auto start shift
+        const autoStart = async () => {
+            console.log("Triggering auto-online (start shift) on login...");
+            // Small delay to ensure auth state is fully propagated to all interceptors
+            await new Promise(resolve => setTimeout(resolve, 500));
+            try {
+                let lat = 0, lng = 0;
+                if (Platform.OS !== "web") {
+                    try {
+                        const { status } = await Location.requestForegroundPermissionsAsync();
+                        if (status === "granted") {
+                            const loc = await Promise.race([
+                                Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }),
+                                new Promise(resolve => setTimeout(resolve, 3000, null)) // 3s timeout
+                            ]);
+                            if (loc) {
+                                lat = loc.coords.latitude;
+                                lng = loc.coords.longitude;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn("Location fetch for autoStart failed:", e.message);
+                    }
+                }
+
+                console.log(`Sending startShift with auth token, lat: ${lat}, lng: ${lng}`);
+                await startShift(token, {
+                    start_time: new Date().toISOString(),
+                    start_latitude: lat,
+                    start_longitude: lng,
+                });
+
+                console.log("startShift succeeded, now updating status to available");
+                await updateDriverStatus(token, "available");
+                setIsOnline(true);
+                console.log("✅ Auto-started shift and went online successfully");
+            } catch (error) {
+                // Shift might already be started — just go available
+                console.log("⚠️ Auto-start shift failed, attempting to just go available... Error:", error.message || "Unknown error");
+                try {
+                    await updateDriverStatus(token, "available");
+                    setIsOnline(true);
+                    console.log("✅ Successfully went available after shift start failed");
+                } catch (e) {
+                    console.error("❌ Auto-online fully failed:", e.message || "Unknown error");
+                }
+            }
+            hasAutoStarted.current = true;
+        };
+        autoStart();
+    }, [user, token]);
 
     // Generate unique session ID
     const generateSessionId = () => {
@@ -169,7 +245,7 @@ export function SensorProvider({ children }) {
             if (locationTrackingRef.current) {
                 return;
             }
-            
+
             if (Platform.OS === "web") return;
             const { status } = await Location.requestForegroundPermissionsAsync();
             if (status !== "granted") {
@@ -178,15 +254,15 @@ export function SensorProvider({ children }) {
             }
 
             if (!isMounted) return;
-            
+
             locationTrackingRef.current = true;
             console.log("Starting location tracking for speed...");
-            
+
             subscription = await Location.watchPositionAsync(
                 {
-                    accuracy: Location.Accuracy.High,
-                    timeInterval: LOCATION_INTERVAL,
-                    distanceInterval: 5,
+                    accuracy: Location.Accuracy.BestForNavigation,
+                    timeInterval: 500,
+                    distanceInterval: 1,
                 },
                 (location) => {
                     const speedMs = location.coords.speed;
@@ -236,7 +312,7 @@ export function SensorProvider({ children }) {
                     }).catch(err => console.warn("Telemetry update failed:", err.message));
                 }
             }, TELEMETRY_INTERVAL);
-            
+
             deviceStatsIntervalRef.current = setInterval(() => {
                 updateTelemetry(token, {
                     battery_level: batteryLevel,
@@ -276,7 +352,7 @@ export function SensorProvider({ children }) {
             // Check if sensors are available
             const accelAvailable = await Accelerometer.isAvailableAsync();
             const gyroAvailable = await Gyroscope.isAvailableAsync();
-            
+
             console.log(`Accelerometer available: ${accelAvailable}, Gyroscope available: ${gyroAvailable}`);
 
             if (!accelAvailable && !gyroAvailable) {
@@ -403,14 +479,14 @@ export function SensorProvider({ children }) {
                 console.log("Shift started (Go On-Duty)");
             }
         } catch (error) {
-            console.warn("Failed to update driver shift status:", error.message);
+            console.warn("Failed to update driver shift status:", error.message || "Unknown error");
             // Fallback to basic status update if shift endpoints fail
             try {
                 const newStatus = isOnline ? "offline" : "available";
                 await updateDriverStatus(token, newStatus);
                 setIsOnline(!isOnline);
             } catch (innerError) {
-                console.error("Critical failure updating status:", innerError.message);
+                console.error("Critical failure updating status:", innerError?.message || "Unknown error");
             }
         }
     }, [token, isOnline, locationData]);
@@ -423,12 +499,12 @@ export function SensorProvider({ children }) {
             setIsOnBreak(true);
             setBreakStartTime(Date.now());
             setBreakDuration(0);
-            
+
             // Start timer
             breakIntervalRef.current = setInterval(() => {
                 setBreakDuration((prev) => prev + 1);
             }, 1000);
-            
+
             console.log("Break started");
             return true;
         } catch (error) {
@@ -441,17 +517,17 @@ export function SensorProvider({ children }) {
         if (!token) return false;
         try {
             await updateDriverStatus(token, "available");
-            
+
             if (breakIntervalRef.current) {
                 clearInterval(breakIntervalRef.current);
                 breakIntervalRef.current = null;
             }
-            
+
             const finalDuration = breakDuration;
             setIsOnBreak(false);
             setBreakStartTime(null);
             setBreakDuration(0);
-            
+
             console.log("Break ended after", finalDuration, "seconds");
             return finalDuration;
         } catch (error) {

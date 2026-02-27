@@ -25,7 +25,7 @@ export default function OrderNotificationScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { token } = useAuth();
-  const { currentOffer, clearCurrentOffer, checkForOffers } = useOrderNotification();
+  const { currentOffer, clearCurrentOffer, syncOffers } = useOrderNotification();
   const { refetchOrders } = useOrders();
 
   const [driverLocation, setDriverLocation] = useState(null);
@@ -164,11 +164,11 @@ export default function OrderNotificationScreen() {
   // Use route data for distance/duration if available
   const displayDistance = routeData?.totalDistance
     ? routeData.totalDistance.toFixed(1)
-    : order.estimated_distance_km?.toFixed(1) || '~';
+    : order.distance_km?.toFixed(1) || '~';
 
   const displayDuration = routeData?.totalDuration
     ? Math.round(routeData.totalDuration)
-    : order.estimated_duration_min?.toFixed(0) || '~';
+    : order.duration_min?.toFixed(0) || '~';
 
   const formatTime = (dateString) => {
     if (!dateString) return 'ASAP';
@@ -186,7 +186,7 @@ export default function OrderNotificationScreen() {
         <View style={styles.overlay} />
         <View style={styles.cardContainer}>
           <Card style={styles.notificationCard}>
-            <Text style={styles.badge}>NEW ORDER ASSIGNED</Text>
+            <Text style={styles.badge}>NEW ORDER OFFER</Text>
             <Text style={styles.title}>🍽️ {order.restaurant_name}</Text>
             <View style={styles.detailRow}>
               <Text style={styles.label}>Pickup Address:</Text>
@@ -202,7 +202,7 @@ export default function OrderNotificationScreen() {
             </View>
             <View style={styles.detailRow}>
               <Text style={styles.label}>Pickup Time:</Text>
-              <Text style={styles.value}>{formatTime(order.estimated_pickup_time)}</Text>
+              <Text style={styles.value}>{formatTime(order.pickup_time)}</Text>
             </View>
             <View style={styles.infoRow}>
               <View style={styles.infoItem}>
@@ -323,7 +323,7 @@ export default function OrderNotificationScreen() {
       <View style={styles.cardContainer}>
         <Card style={styles.notificationCard}>
           <View style={styles.badgeRow}>
-            <Text style={styles.badge}>NEW ORDER ASSIGNED</Text>
+            <Text style={styles.badge}>NEW ORDER OFFER</Text>
             {isLoadingRoute && (
               <ActivityIndicator size="small" color={theme.colors.primary} />
             )}

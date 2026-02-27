@@ -81,8 +81,8 @@ export default function FatigueDetectionScreen() {
     outputRange: [-100, 100],
   });
 
-  // Camera not available (web or no permission yet granted)
-  const showCameraFallback = Platform.OS === 'web' || !permission?.granted;
+  // Camera not available (web or no permission yet granted or permission is loading)
+  const showCameraFallback = Platform.OS === 'web' || !permission || !permission.granted;
 
   return (
     <View style={styles.container}>

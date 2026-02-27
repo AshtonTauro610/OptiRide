@@ -6,6 +6,7 @@ import { Button } from '@/components/Button';
 import { theme } from '@/constants/theme';
 import { useAuth } from '@/contexts/AuthContext';
 import * as Location from 'expo-location';
+import { respondToEmergency } from '@/services/safety';
 
 // Conditionally import MapView for native platforms
 let MapView, Marker, PROVIDER_GOOGLE;
@@ -16,13 +17,9 @@ if (Platform.OS !== 'web') {
   PROVIDER_GOOGLE = Maps.PROVIDER_GOOGLE;
 }
 
-// TODO: Backend endpoint for reporting fall detection event
-// POST /safety/fall-detected - Report fall detection with location
-// This would create an ACCIDENT alert and trigger emergency notification workflow
-
 export default function FallDetectionScreen() {
   const router = useRouter();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [countdown, setCountdown] = useState(60);
   const [driverLocation, setDriverLocation] = useState(null);
   const [isLoadingLocation, setIsLoadingLocation] = useState(true);
@@ -67,19 +64,20 @@ export default function FallDetectionScreen() {
   }, []);
 
   const handleImOkay = async () => {
-    // TODO: Report false positive to backend
-    // POST /safety/fall-dismissed - Driver confirmed they are okay
+    try {
+      await respondToEmergency(token, user.driver_id, "false_alarm");
+    } catch (e) {
+      console.warn("Error dismissing fall:", e);
+    }
     router.back();
   };
 
   const handleCallEmergency = async () => {
-    // TODO: Report confirmed fall/accident to backend
-    // This should:
-    // 1. Create an ACCIDENT alert with location
-    // 2. Notify emergency services
-    // 3. Notify admin dashboard
-    // 4. Update driver status to "emergency"
-
+    try {
+      await respondToEmergency(token, user.driver_id, "confirmed");
+    } catch (e) {
+      console.warn("Error confirming fall:", e);
+    }
     router.push('/fall-assistance');
   };
 

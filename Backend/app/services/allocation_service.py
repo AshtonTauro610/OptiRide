@@ -1,9 +1,12 @@
 import math
 import logging
 import googlemaps
+import numpy as np
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timedelta
 from geoalchemy2.shape import to_shape
+from scipy.optimize import linear_sum_assignment
+from geoalchemy2.functions import ST_X, ST_Y
 
 from app.core.kafka import kafka_producer
 from sqlalchemy.orm import Session
@@ -124,32 +127,34 @@ class AllocationService:
         if not allocatable_drivers:
             return {"status": "skipped", "message": "No allocatable drivers found"}
         
-        surge_zones.sort(key=lambda zs: zs["demand_pressure"], reverse=True)
-        assignments = []
-
-        assigned_drivers = set()
+        #surge_zones.sort(key=lambda zs: zs["demand_pressure"], reverse=True)
+        #assignments = []
+        #assigned_drivers = set()
+        
+        zone_slots = []
         for sz in surge_zones:
-            available_to_move = [d for d in allocatable_drivers if d.driver_id not in assigned_drivers]
-            if not available_to_move:
-                break
+            #available_to_move = [d for d in allocatable_drivers if d.driver_id not in assigned_drivers]
+            #if not available_to_move:
+            #    break
             
             zone_id = sz["zone_id"]
             zone = zone_map[zone_id]
-            
             # Use capacity factor to determine how many actual drivers we need
             needed_drivers = math.ceil(sz["pending_orders"] / self.DRIVER_CAPACITY)
             needed = max(1, needed_drivers - sz["available_drivers"])
+            zone_slots.extend([zone] * needed)
 
-            ranked = self._rank_drivers_by_proximity(available_to_move, zone)
+        assignments = self._assign_drivers_to_zones_optimized(allocatable_drivers, zone_slots)
+            #ranked = self._rank_drivers_by_proximity(available_to_move, zone)
 
-            moved = 0
-            for driver, travel_time in ranked:
-                if moved >= needed:
-                    break
+            #moved = 0
+            #for driver, travel_time in ranked:
+            #    if moved >= needed:
+            #        break
                 
-                assignments.append((driver.driver_id, zone_id))
-                assigned_drivers.add(driver.driver_id)
-                moved += 1
+            #    assignments.append((driver.driver_id, zone_id))
+            #    assigned_drivers.add(driver.driver_id)
+            #    moved += 1
 
         if not assignments:
             return {"status": "skipped", "message": "No assignments made"}       
@@ -187,8 +192,19 @@ class AllocationService:
         self.db.commit()
         self.db.refresh(driver)
 
+        zone_lat, zone_lon, zone_name = None, None, None
+        if zone:
+            zone_name = zone.name if hasattr(zone, 'name') else None
+            if zone.centroid:
+                try:
+                    pt = to_shape(zone.centroid)
+                    zone_lon = pt.x
+                    zone_lat = pt.y
+                except:
+                    pass
+
         # Notify driver
-        emit_sync(socket_manager.notify_driver_allocation(driver_id, zone_id))
+        emit_sync(socket_manager.notify_driver_allocation(driver_id, zone_id, zone_lat, zone_lon, zone_name))
         
         return {"status": "ok", "message": "Driver allocated to zone"}
 
@@ -208,9 +224,46 @@ class AllocationService:
             return {"status": "skipped", "message": "No zones found"}
         
         stats = self._get_zone_stats(zones)
-        # Find zone with highest demand pressure
-        sorted_zones = sorted(stats.values(), key=lambda x: x["demand_pressure"], reverse=True)
-        best_zone_id = sorted_zones[0]["zone_id"]
+        
+        # Consider driver's location for JIT allocation to avoid sending them too far
+        driver_lat = None
+        driver_lon = None
+        if driver.location is not None:
+            try:
+                driver_pt = to_shape(driver.location)
+                driver_lon = driver_pt.x
+                driver_lat = driver_pt.y
+            except Exception as e:
+                logger.error(f"Error parsing driver location: {e}")
+
+        best_zone_id = None
+        best_score = float('-inf')
+
+        for zone in zones:
+            zone_stat = stats.get(zone.zone_id, {})
+            score = zone_stat.get("demand_pressure", 0.0)
+
+            if driver_lat is not None and driver_lon is not None and zone.centroid is not None:
+                try:
+                    zone_pt = to_shape(zone.centroid)
+                    zone_lon = zone_pt.x
+                    zone_lat = zone_pt.y
+                    
+                    dist_km = self._calculate_haversine_distance(driver_lat, driver_lon, zone_lat, zone_lon)
+                    # Apply a distance penalty (e.g., -0.5 score per km) 
+                    # so closer zones are prioritized unless demand pressure is overwhelmingly higher elsewhere
+                    score -= (dist_km * 0.5)
+                except Exception as e:
+                    logger.error(f"Error parsing zone {zone.zone_id} centroid: {e}")
+
+            if score > best_score:
+                best_score = score
+                best_zone_id = zone.zone_id
+
+        if not best_zone_id:
+            # Fallback to pure demand pressure if calculation fails
+            sorted_zones = sorted(stats.values(), key=lambda x: x["demand_pressure"], reverse=True)
+            best_zone_id = sorted_zones[0]["zone_id"]
 
         logger.info(f"JIT Allocation: Moving driver {driver_id} to highest-demand zone {best_zone_id}")
         driver.current_zone = best_zone_id
@@ -219,8 +272,20 @@ class AllocationService:
         self.db.commit()
         self.db.refresh(driver)
 
+        zone_lat, zone_lon, zone_name = None, None, None
+        assigned_zone = next((z for z in zones if z.zone_id == best_zone_id), None)
+        if assigned_zone:
+            zone_name = assigned_zone.name if hasattr(assigned_zone, 'name') else None
+            if assigned_zone.centroid:
+                try:
+                    pt = to_shape(assigned_zone.centroid)
+                    zone_lon = pt.x
+                    zone_lat = pt.y
+                except:
+                    pass
+
         # Notify driver
-        emit_sync(socket_manager.notify_driver_allocation(driver_id, best_zone_id))
+        emit_sync(socket_manager.notify_driver_allocation(driver_id, best_zone_id, zone_lat, zone_lon, zone_name))
 
         return {"status": "ok", "zone_id": best_zone_id}
 
@@ -327,7 +392,7 @@ class AllocationService:
         return budget
             
     
-    def _assign_drivers_to_zones(
+    """def _assign_drivers_to_zones(
         self,
         drivers : List[Driver],
         zones : List[Zone],
@@ -357,8 +422,95 @@ class AllocationService:
                 remaining_drivers.remove(driver)
                 assigned += 1
 
-        return assignments
+        return assignments"""
+    
+    def _assign_drivers_to_zones(
+        self,
+        drivers: List[Driver],
+        zones: List[Zone],
+        budget: Dict[str, int],
+        zone_demand: Dict[str, float]
+    ) -> List[Tuple[str, str]]:
+        zone_slots = []
+        for zone in zones:
+            needed = budget.get(zone.zone_id, 0)
+            zone_slots.extend([zone]*needed)
+        
+        return self._assign_drivers_to_zones_optimized(drivers, zone_slots)
+    
+    def _assign_drivers_to_zones_optimized(
+        self,
+        drivers: List[Driver],
+        zone_slots: List[Zone]
+    ) -> List[Tuple[str, str]]:
+        """Hungarian Algorithm for optimal assignment"""
+        if not drivers or not zone_slots:
+            return []
+        
+        cost_matrix = np.zeros((len(drivers), len(zone_slots)))
+        matrix = False
 
+        driver_penalties = [self._calculate_driver_penalties(d) for d in drivers]
+
+        if self.gmaps:
+            try:
+                unique_zones = list({z.zone_id : z for z in zone_slots}.values())
+                origins = [f"{to_shape(d.location).y},{to_shape(d.location).x}" for d in drivers]
+                destinations = [f"{to_shape(z.centroid).y},{to_shape(z.centroid).x}" for z in unique_zones]
+
+                if origins and destinations:
+                    response = self.gmaps.distance_matrix(origins=origins, destinations=destinations)
+
+                    if response["status"] == "OK":
+                        for i, row in enumerate(response["rows"]):
+                            penalty = driver_penalties[i]
+                            for j, element in enumerate(row["elements"]):
+                                if element["status"] == "OK":
+                                    base_travel_time = element["duration"]["value"] / 60.0
+                                    unique_zone_id = unique_zones[j].zone_id
+
+                                    travel_time = base_travel_time + penalty
+                                    
+                                    for slot_idx, slot_zone in enumerate(zone_slots):
+                                        if slot_zone.zone_id == unique_zone_id:
+                                            cost_matrix[i, slot_idx] = travel_time
+                                else:
+                                    raise Exception("API Element status not OK")
+                        matrix = True
+            except Exception as e:
+                logger.warning(f"Google Maps batch request failed, fall back to Haversine")
+        if not matrix:
+            for i, driver in enumerate(drivers):
+                penalty = driver_penalties[i]
+                for j, zone in enumerate(zone_slots):
+                    cost_matrix[i, j] = self._get_travel_time(driver, zone) + penalty
+        
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+        assignments = []
+        for i in range(len(row_ind)):
+            driver = drivers[row_ind[i]]
+            zone = zone_slots[col_ind[i]]
+            assignments.append((driver.driver_id, zone.zone_id))
+
+        return assignments
+    
+    def _get_travel_time(self, driver: Driver, zone: Zone) -> float:
+        if not driver.location or not zone.centroid:
+            return 999.0
+        
+        try:
+            driver_shape = to_shape(driver.location)
+            zone_shape = to_shape(zone.centroid)
+
+            return self._calculate_haversine_distance(
+                driver_shape.y, driver_shape.x,
+                zone_shape.y, zone_shape.x
+            )
+        except Exception as e:
+            logger.error(f"Error calculating haversine distance: {e}")
+            return 999.0
+                
     def _apply_assignments(self, assignments):
         for driver_id, zone_id in assignments:
             driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
@@ -377,8 +529,20 @@ class AllocationService:
                 "timestamp" : datetime.now().isoformat()
             })   
             
+            zone_lat, zone_lon, zone_name = None, None, None
+            zone_obj = self.db.query(Zone).filter(Zone.zone_id == zone_id).first()
+            if zone_obj:
+                zone_name = zone_obj.name if hasattr(zone_obj, 'name') else None
+                if zone_obj.centroid:
+                    try:
+                        pt = to_shape(zone_obj.centroid)
+                        zone_lon = pt.x
+                        zone_lat = pt.y
+                    except:
+                        pass
+            
             # Notify driver via Socket
-            emit_sync(socket_manager.notify_driver_allocation(driver_id, zone_id))
+            emit_sync(socket_manager.notify_driver_allocation(driver_id, zone_id, zone_lat, zone_lon, zone_name))
 
         self.db.commit()
 
@@ -413,6 +577,22 @@ class AllocationService:
                 "demand_pressure" : round(demand_pressure, 2),
             }
         return stats
+
+    def _calculate_driver_penalties(self, driver : Driver) -> float:
+        penalty = 0.0
+
+        fatigue_score = getattr(driver, "fatigue_score", 0.0)
+        if fatigue_score > 0.65:
+            penalty += 60
+        elif fatigue_score > 0.4:
+            penalty += (fatigue_score * 50)
+
+        battery_level = getattr(driver, "battery_level", 100)
+        if battery_level < 20:
+            penalty += 30
+
+        return penalty
+        
     
     def _rank_drivers_by_proximity(
         self,
@@ -493,4 +673,3 @@ class AllocationService:
         distance_km = 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
         return (distance_km / 45) * 60
     
-

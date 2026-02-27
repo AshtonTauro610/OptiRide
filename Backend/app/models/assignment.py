@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey
+from sqlalchemy import Column, String, DateTime, ForeignKey, JSON, Float
 from sqlalchemy.orm import relationship
 from geoalchemy2 import Geometry
 from app.db.database import Base
@@ -11,6 +11,12 @@ class Assignment(Base):
     assignment_id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     driver_id = Column(String, ForeignKey('drivers.driver_id'), nullable=False)
     route = Column(Geometry('LINESTRING'), nullable=True)
+    
+    route_polyline = Column(String, nullable=True)
+    total_distance_km = Column(Float, nullable=True)
+    estimated_time_min = Column(Float, nullable=True)
+    optimized_sequence = Column(JSON, nullable=True)
+
     eta = Column(DateTime)
     status = Column(String, default="assigned")  # assigned, in_progress, completed, cancelled
     assigned_at = Column(DateTime, default=datetime.utcnow)
