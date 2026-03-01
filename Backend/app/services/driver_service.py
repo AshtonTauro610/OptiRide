@@ -364,6 +364,7 @@ class DriverService:
             )
         
         driver.status = DriverStatus.AVAILABLE.value
+        driver.fatigue_score = 0.0
         self.db.commit()
         self.db.refresh(driver)
         return driver
@@ -382,8 +383,7 @@ class DriverService:
         # ========== TODAY'S STATS (Primary - Real-time monitoring) ==========
         today_orders = self.db.query(Order).filter(
             Order.driver_id == driver.driver_id,
-            Order.status == 'delivered',
-            Order.delivered_at >= today_start
+            Order.created_at >= today_start
         ).count()
         
         # Today's distance (from delivered orders)
@@ -432,14 +432,12 @@ class DriverService:
         
         today_other_alerts = today_safety_alerts - today_critical_alerts - today_fatigue_alerts - today_speeding - today_harsh_braking
         
-        # Today's breaks count (from Break table)
         today_breaks = self.db.query(Break).filter(
             Break.driver_id == driver.driver_id,
             Break.start_time >= today_start
         ).count()
         
-        # Calculate TODAY's safety score (0-100)
-        # Deductions based on today's alerts only
+
         today_safety_score = 100.0
         today_safety_score -= min(today_critical_alerts * 15, 45)
         today_safety_score -= min(today_fatigue_alerts * 5, 25)
@@ -447,13 +445,20 @@ class DriverService:
         today_safety_score -= min(today_harsh_braking * 2, 10)
         today_safety_score -= min(today_other_alerts * 1, 5)
         
-        # Factor in current fatigue level from driver record
-        current_fatigue = driver.fatigue_score or 0
-        if current_fatigue > 7:  # SEVERE fatigue
+        from app.models.sensor_record import SensorRecord
+        latest_sensor = self.db.query(SensorRecord).filter(
+            SensorRecord.driver_id == driver.driver_id,
+            SensorRecord.recorded_at >= today_start,
+            SensorRecord.fatigue_score > 0.0
+        ).order_by(SensorRecord.recorded_at.desc()).first()
+        
+        current_fatigue = latest_sensor.fatigue_score if latest_sensor else 0.0
+
+        if current_fatigue >= 0.8:  # SEVERE fatigue
             today_safety_score -= 15
-        elif current_fatigue > 4:  # WARNING fatigue
+        elif current_fatigue >= 0.65:  # WARNING fatigue
             today_safety_score -= 8
-        elif current_fatigue > 2:  # Elevated fatigue
+        elif current_fatigue >= 0.5:  # Elevated fatigue
             today_safety_score -= 3
         
         today_safety_score = max(0, today_safety_score)
@@ -551,7 +556,7 @@ class DriverService:
             today_harsh_braking=today_harsh_braking,
             today_speeding=today_speeding,
             today_fatigue_alerts=today_fatigue_alerts,
-            current_fatigue_score=driver.fatigue_score or 0.0,
+            current_fatigue_score=current_fatigue,
             # Lifetime stats
             total_orders=total_orders,
             total_breaks=total_breaks,

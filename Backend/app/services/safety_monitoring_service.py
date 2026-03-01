@@ -1,6 +1,10 @@
 from geoalchemy2.shape import to_shape
 import asyncio
 import cv2
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
+import os
 import numpy as np
 import base64
 from datetime import datetime, timedelta
@@ -13,7 +17,11 @@ from geoalchemy2.functions import ST_Distance, ST_MakePoint, ST_SetSRID
 from geoalchemy2.elements import WKTElement
 from app.models.sensor_record import SensorRecord
 from app.models.alert import Alert
+from app.models.driver import Driver
 from app.services.order_service import OrderService
+from app.services.driver_service import DriverService
+from app.schemas.driver import DriverStatus
+import asyncio
 from app.schemas.sensor import (
     SensorDataBatch, FatigueAnalysisResult, MovementAnalysisResult, 
     AccelerometerData, GyroscopeData
@@ -28,27 +36,192 @@ active_emergencies = {}
 class SafetyMonitoringService:
     def __init__(self, db: Session):
         self.db = db
+        # Movement Thresholds
         self.HARSH_BRAKING_THRESHOLD = -8.0
         self.HARSH_ACCELERATION_THRESHOLD = 5.0
         self.SHARP_TURN_THRESHOLD = 2.5
         self.SUDDEN_IMPACT_THRESHOLD = 15.0
-        self.NORMAL_BLINK_RATE = 15
-        self.DROWSY_BLINK_RATE = 8
-        self.HEAD_TILT_THRESHOLD = 20
         self.SPEED_LIMIT_KMH = 100
+
+        # Fatigue Thresholds
+        self.HEAD_TILT_THRESHOLD = 20.0
+        self.YAWN_MAR_THRESHOLD = 0.6  # Mouth Aspect Ratio
+        self.DROWSY_EAR_THRESHOLD = 0.22  # Eye Aspect Ratio (below this means eyes are closed/drowsy)
 
         self.load_models()
     
     def load_models(self):
         try:
-            self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-            self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
-            print("Models loaded successfully.")
+            model_path = os.path.join(os.path.dirname(__file__), '..', '..', 'ml', 'face_landmarker.task')
+            base_options = python.BaseOptions(model_asset_path=os.path.abspath(model_path))
+            options = vision.FaceLandmarkerOptions(
+                base_options=base_options,
+                num_faces=1,
+                min_face_detection_confidence=0.5,
+                min_face_presence_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            self.face_mesh = vision.FaceLandmarker.create_from_options(options)
+            logger.info("MediaPipe Face Mesh (Tasks API) loaded successfully.")
         except Exception as e:
-            print(f"Error loading models: {e}")
-            self.face_cascade = None
-            self.eye_cascade = None
+            logger.error(f"Error loading models: {e}")
+            self.face_mesh = None
+
     
+    def calculate_distance(self, p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+        """Euclidean distance between two points."""
+        return math.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
+
+    def calculate_tilt(self, p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+        """Calculates angle of line between two points relative to horizontal."""
+        delta_y = p2[1] - p1[1]
+        delta_x = p2[0] - p1[0]
+        return math.degrees(math.atan2(delta_y, delta_x))
+
+    def calculate_ear(self, eye_landmarks, w: int, h: int) -> float:
+        """Calculates Eye Aspect Ratio (EAR) for a single eye."""
+        pts = [(int(pt.x * w), int(pt.y * h)) for pt in eye_landmarks]
+        
+        dist_v1 = self.calculate_distance(pts[1], pts[5])
+        dist_v2 = self.calculate_distance(pts[2], pts[4])
+
+        dist_h = self.calculate_distance(pts[0], pts[3])
+        
+        if dist_h == 0:
+            return 0.0
+        return (dist_v1 + dist_v2) / (2.0 * dist_h)
+
+    
+    def detect_head_tilt(self, face_landmarks, w: int, h: int) -> float:
+        pt_left_eye = face_landmarks.landmark[468] 
+        pt_right_eye = face_landmarks.landmark[473]
+
+        p1_px = (pt_left_eye.x * w, pt_left_eye.y * h)
+        p2_px = (pt_right_eye.x * w, pt_right_eye.y * h)
+
+        return abs(self.calculate_tilt(p1_px, p2_px))
+    
+    def detect_yawn(self, face_landmarks, w: int, h: int) -> bool:
+        up_px = (face_landmarks.landmark[13].x * w, face_landmarks.landmark[13].y * h)
+        low_px = (face_landmarks.landmark[14].x * w, face_landmarks.landmark[14].y * h)
+        left_px = (face_landmarks.landmark[61].x * w, face_landmarks.landmark[61].y * h)
+        right_px = (face_landmarks.landmark[291].x * w, face_landmarks.landmark[291].y * h)
+
+        vert_dist = self.calculate_distance(up_px, low_px)
+        horz_dist = self.calculate_distance(left_px, right_px)
+
+        ratio = 0.0 if horz_dist == 0 else (vert_dist / horz_dist)
+        return ratio > self.YAWN_MAR_THRESHOLD
+
+    def get_avg_ear(self, face_landmarks, w: int, h: int) -> float:
+        left_eye_indices = [33, 160, 158, 133, 153, 144]
+        left_eye_pts = [face_landmarks.landmark[i] for i in left_eye_indices]
+        left_ear = self.calculate_ear(left_eye_pts, w, h)
+
+        right_eye_indices = [362, 385, 387, 263, 373, 380]
+        right_eye_pts = [face_landmarks.landmark[i] for i in right_eye_indices]
+        right_ear = self.calculate_ear(right_eye_pts, w, h)
+
+        return (left_ear + right_ear) / 2.0
+
+    def estimate_fatigue_score(self, avg_ear: float, head_tilt: float, yawn_detected: bool) -> float:
+        score = 0.0
+
+        # EAR Mapping (normal > 0.28 = 0 penalty, drowsy < 0.15 = 0.6 penalty)
+        if avg_ear < 0.28:
+            if avg_ear <= 0.15:
+                score += 0.6
+            else:
+                score += 0.6 * ((0.28 - avg_ear) / (0.28 - 0.15))
+
+        # Head Tilt Mapping (normal < 10 degrees = 0 penalty, severe > 25 degrees = 0.4 penalty)
+        if head_tilt > 10.0:
+            if head_tilt >= 25.0:
+                score += 0.4
+            else:
+                score += 0.4 * ((head_tilt - 10.0) / (25.0 - 10.0))
+
+        if yawn_detected:
+            score += 0.2
+        
+        logger.info(f"Fatigue score calculation -> Total: {score:.2f} | EAR: {avg_ear:.3f}, Head Tilt: {head_tilt:.1f}deg, Yawn: {yawn_detected}")
+        return min(score, 1.0)
+
+    def analyze_fatigue(self, frame_data: str) -> FatigueAnalysisResult:
+        try:
+            image_data = base64.b64decode(frame_data)
+            np_arr = np.frombuffer(image_data, np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                raise ValueError("Decoded frame is None")
+
+            img_h, img_w, _ = frame.shape
+            rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            if not self.face_mesh:
+                raise ValueError("MediaPipe Face Mesh is not initialized")
+
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+            mp_results = self.face_mesh.detect(mp_image)
+
+            if not mp_results.face_landmarks:
+                return FatigueAnalysisResult(
+                    fatigue_score=0.0,
+                    eye_blink_rate=0.0,
+                    yawn_detected=False,
+                    head_tilt_rate=0.0,
+                    recommendation="No face detected. Please ensure proper camera placement.",
+                    alert_level="none"
+                )
+            
+            class FaceLandmarksWrapper:
+                def __init__(self, landmarks_list):
+                    self.landmark = landmarks_list
+                    
+            face_landmarks = FaceLandmarksWrapper(mp_results.face_landmarks[0])
+
+            avg_ear = self.get_avg_ear(face_landmarks, img_w, img_h)
+            head_tilt = self.detect_head_tilt(face_landmarks, img_w, img_h)
+            yawn_detected = self.detect_yawn(face_landmarks, img_w, img_h)
+
+            fatigue_score = self.estimate_fatigue_score(avg_ear, head_tilt, yawn_detected)
+
+            # Updated Thresholds
+            if fatigue_score >= 0.8:
+                recommendation = "Critical fatigue detected! You have been placed on break and your active order was unassigned."
+                alert_level = "critical"
+            elif fatigue_score >= 0.65:
+                recommendation = "Moderate fatigue detected. Consider taking a short break."
+                alert_level = "warning"
+            else:
+                recommendation = "No fatigue detected. Driver is alert."
+                alert_level = "none"
+            
+            simulated_blink_rate = 8.0 if avg_ear < self.DROWSY_EAR_THRESHOLD else 15.0
+            
+            logger.info(f"Fatigue Analysis - Score: {fatigue_score:.2f}, Avg EAR: {avg_ear:.3f}, Head Tilt: {head_tilt:.1f}deg, Yawn: {yawn_detected}")
+
+            return FatigueAnalysisResult(
+                fatigue_score=fatigue_score,
+                eye_blink_rate=simulated_blink_rate,  
+                yawn_detected=yawn_detected,
+                head_tilt_rate=head_tilt,
+                recommendation=recommendation,
+                alert_level=alert_level
+            )
+
+        except Exception as e:
+            logger.error(f"Error in fatigue analysis: {e}")
+            return FatigueAnalysisResult(
+                fatigue_score=0.0,
+                eye_blink_rate=0.0,
+                yawn_detected=False,
+                head_tilt_rate=0.0,
+                recommendation="Error in processing frame data.",
+                alert_level="none"
+            )
+
     def process_sensor_data_batch(self, batch: SensorDataBatch) -> Dict[str, Any]:
         results = {
             "driver_id": batch.driver_id,
@@ -89,115 +262,83 @@ class SafetyMonitoringService:
         )
         results["alerts"] = alerts
 
+        # Update driver's live fatigue score in DB
+        driver = self.db.query(Driver).filter(Driver.driver_id == batch.driver_id).first()
+        if driver and fatigue_analysis:
+            driver.fatigue_score = fatigue_analysis.score
+            self.db.commit()
+
+        # Enforce automated break actions on critical fatigue
+        if fatigue_analysis.alert_level == "critical":
+            self.enforce_fatigue_break(batch.driver_id, batch.location_data)
+
         return results
-    
-    def analyze_fatigue(self, frame_data: str) -> FatigueAnalysisResult:
+
+    def enforce_fatigue_break(self, driver_id: str, location_data):
         try:
-            image_data = base64.b64decode(frame_data)
-            np_arr = np.frombuffer(image_data, np.uint8)
-            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            driver_service = DriverService(self.db)
+            driver = driver_service.get_driver_by_id(driver_id)
+            if driver and driver.status != DriverStatus.ON_BREAK.value:
+                driver.status = DriverStatus.ON_BREAK.value
+                driver.breaks += 1
+                self.db.commit()
 
-            if frame is None:
-                raise ValueError("Decoded frame is None")
+            order_service = OrderService(self.db)
+            active_orders = self.db.query(Order).filter(
+                Order.driver_id == driver_id,
+                Order.status.in_(["assigned", "offered", "picked_up"])
+            ).all()
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = self.face_cascade.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-            )
+            for order in active_orders:
+                logger.info(f"Unassigning order {order.order_id} from driver {driver_id} due to critical fatigue.")
+                if order.status in ["assigned", "offered"]:
+                    order.status = "pending"
+                    order.driver_id = None
+                    order.pickup_time = None
+                    order.dropoff_time = None
+                    self.db.commit()
+                    try:
+                        order_service.auto_assign_order(order.order_id)
+                    except Exception as e:
+                        logger.error(f"Failed to auto-reassign order {order.order_id}: {e}")
+                elif order.status == "picked_up":
+                    order.pickup_latitude = location_data.latitude if location_data else 0.0
+                    order.pickup_longitude = location_data.longitude if location_data else 0.0
+                    order.pickup_address = "EMERGENCY RETRIEVAL: Fatigued Driver"
+                    order.pickup = WKTElement(f'POINT({order.pickup_longitude} {order.pickup_latitude})', srid=4326)
+                    order.status = "pending"
+                    order.driver_id = None
+                    self.db.commit()
 
-            if len(faces) == 0:
-                return FatigueAnalysisResult(
-                    fatigue_score=0.0,
-                    eye_blink_rate=0.0,
-                    yawn_detected=False,
-                    head_tilt_rate=0.0,
-                    recommendation="No face detected. Please ensure proper camera placement.",
-                    alert_level="none"
-                )
-            
-            (x, y, w, h) = max(faces, key=lambda f: f[2] * f[3])
-            face_roi = gray[y:y+h, x:x+w]
+                    nearby_drivers = order_service._get_drivers_with_capacity(
+                        latitude=order.pickup_latitude,
+                        longitude=order.pickup_longitude,
+                        radius_km=15.0,
+                        limit=1,
+                        exclude_driver_ids=[driver_id]
+                    )
 
-            eyes = self.eye_cascade.detectMultiScale(
-                face_roi, scaleFactor=1.1, minNeighbors=10, minSize=(15, 15)
-            )
-            num_eyes_detected = len(eyes)
+                    if nearby_drivers:
+                        rescue_driver = nearby_drivers[0]
+                        from app.services.routing_service import RoutingEngine
+                        routing_engine = RoutingEngine(self.db)
+                        routing_engine.dispatch(rescue_driver.driver_id, [order.order_id], is_emergency=True)
+                        emit_sync(socket_manager.notify_driver_status_change(
+                            rescue_driver.driver_id,
+                            "EMERGENCY_DISPATCH"
+                        ))
 
-            eye_blink_rate = self.calculate_eye_blink_rate(num_eyes_detected)
-            head_tilt_rate = self.detect_head_tilt(face_roi)
-            yawn_detected = self.detect_yawn(face_roi)
+            emit_sync(socket_manager.notify_safety_alert(driver_id, {
+                "type": "FATIGUE_BREAK_ENFORCED",
+                "message": "Critical fatigue has been detected. For your safety, you have been placed on break and your active orders were unassigned.",
+                "timeout_seconds": 0
+            }))
 
-            fatigue_score = self.estimate_fatigue_score(
-                eye_blink_rate, head_tilt_rate, yawn_detected, num_eyes_detected
-            )
-
-            if fatigue_score >= 0.7:
-                recommendation = "High fatigue detected. Please take a break immediately."
-                alert_level = "critical"
-            elif fatigue_score >= 0.4:
-                recommendation = "Moderate fatigue detected. Consider taking a short break."
-                alert_level = "warning"
-            else:
-                recommendation = "No fatigue detected. Driver is alert."
-                alert_level = "none"
-            
-            return FatigueAnalysisResult(
-                fatigue_score=fatigue_score,
-                eye_blink_rate=eye_blink_rate,
-                yawn_detected=yawn_detected,
-                head_tilt_rate=head_tilt_rate,
-                recommendation=recommendation,
-                alert_level=alert_level
-            )
+            logger.info(f"Successfully enforced fatigue break on driver {driver_id}")
 
         except Exception as e:
-            print(f"Error in fatigue analysis: {e}")
-            return FatigueAnalysisResult(
-                fatigue_score=0.0,
-                eye_blink_rate=0.0,
-                yawn_detected=False,
-                head_tilt_rate=0.0,
-                recommendation="Error in processing frame data.",
-                alert_level="none"
-            )
-        
-    def calculate_eye_blink_rate(self, num_eyes_detected: int) -> float:
-        if num_eyes_detected >= 2:
-            return self.NORMAL_BLINK_RATE
-        elif num_eyes_detected == 1:
-            return self.NORMAL_BLINK_RATE * 0.7
-        else:
-            return self.DROWSY_BLINK_RATE
-    
-    def detect_head_tilt(self, face_roi) -> float:
-        # TODO: Implement head tilt detection logic
-        return 0.0
-    
-    def detect_yawn(self, face_roi) -> bool:
-        # TODO: Implement yawn detection logic
-        return False
-    
-    def estimate_fatigue_score(self, eye_blink_rate: float, head_tilt_rate: float, 
-        yawn_detected: bool, num_eyes_detected: int) -> float:
-        # TODO: Implement ML-based fatigue detection
-        score = 0.0
+            logger.error(f"Failed to enforce fatigue break for driver {driver_id}: {e}")
 
-        if eye_blink_rate < self.DROWSY_BLINK_RATE:
-            score += 0.4
-        elif eye_blink_rate < self.NORMAL_BLINK_RATE:
-            score += 0.2
-
-        if abs(head_tilt_rate) > self.HEAD_TILT_THRESHOLD:
-            score += 0.3
-
-        if yawn_detected:
-            score += 0.2
-        
-        if num_eyes_detected == 0:
-            score += 0.1
-
-        return min(score, 1.0)
-    
     def fatigue_analysis_from_movement(self, 
         accelerometer_data: list, 
         gyroscope_data: list
@@ -382,7 +523,6 @@ class SafetyMonitoringService:
                 severity=AlertSeverity.CRITICAL.value,
                 location= WKTElement(f'POINT({location_data.longitude} {location_data.latitude})', srid=4326),
                 acknowledged=False
-
             )
             self.db.add(alert)
             alerts.append(alert)

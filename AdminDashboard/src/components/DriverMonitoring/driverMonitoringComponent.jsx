@@ -32,15 +32,16 @@ const getStatusColor = (status) => {
   }
 };
 const getFatigueColor = (score) => {
-  // Mapping scores (0-10) or text levels to UI classes
-  if (score >= 8 || score === "SEVERE") return "bg-destructive/10 text-destructive";
-  if (score >= 5 || score === "WARNING") return "bg-warning/10 text-warning";
-  if (score >= 2 || score === "MILD") return "bg-primary/10 text-primary";
+  // Mapping scores (0-100) or text levels to UI classes
+  if (score >= 80 || score === "SEVERE") return "bg-destructive/10 text-destructive";
+  if (score >= 65 || score === "WARNING") return "bg-warning/10 text-warning";
+  if (score >= 30 || score === "MILD") return "bg-primary/10 text-primary";
   return "bg-success/10 text-success";
 };
 const formatLastActive = (dateString) => {
   if (!dateString) return "Offline";
-  const date = new Date(dateString);
+  // Append 'Z' to ensure the Date object treats the backend timestamp as UTC
+  const date = new Date(dateString.endsWith('Z') ? dateString : `${dateString}Z`);
   const now = new Date();
   const diffInSeconds = Math.floor((now - date) / 1000);
 
@@ -55,10 +56,10 @@ export function DriverMonitoring() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all-status");
   const [page, setPage] = useState(0);
-  const limit = 20;
+  const limit = 15;
   const [selectedManualZone, setSelectedManualZone] = useState("");
-  // Fetch drivers from API
-  const { data: driversData, refetch } = useDrivers(page * limit, limit);
+  // Fetch drivers from API (fetch all for frontend searching)
+  const { data: driversData, refetch } = useDrivers(0, 500);
 
   usePolling(refetch, 10000);
 
@@ -111,6 +112,7 @@ export function DriverMonitoring() {
   const totalDrivers = driversData?.total || 0;
   const filteredDrivers = drivers.filter((driver) => {
     const matchesSearch = driver.vehicle_plate?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      driver.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       driver.driver_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       driver.email?.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === "all-status" ||
@@ -150,9 +152,9 @@ export function DriverMonitoring() {
         <div className="flex items-center gap-4">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder="Search by ID, plate, or email..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="pl-10" />
+            <Input placeholder="Search by name, ID, plate, or email..." value={searchQuery} onChange={(e) => { setSearchQuery(e.target.value); setPage(0); }} className="pl-10" />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <Select value={statusFilter} onValueChange={(val) => { setStatusFilter(val); setPage(0); }}>
             <SelectTrigger className="w-40">
               <SelectValue placeholder="All Statuses" />
             </SelectTrigger>
@@ -185,11 +187,11 @@ export function DriverMonitoring() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredDrivers.map((driver) => (<TableRow key={driver.driver_id}>
+            {filteredDrivers.slice(page * limit, (page + 1) * limit).map((driver) => (<TableRow key={driver.driver_id}>
               <TableCell>
                 <div className="flex items-center gap-3">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${driver.fatigue_score > 7 ? 'bg-destructive/20 text-destructive' :
-                    driver.fatigue_score > 4 ? 'bg-warning/20 text-warning' :
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold ${driver.fatigue_score >= 0.8 ? 'bg-destructive/20 text-destructive' :
+                    driver.fatigue_score >= 0.65 ? 'bg-warning/20 text-warning' :
                       'bg-primary/20 text-primary'}`}>
                     {driver.name.split(' ').map(n => n[0]).join('')}
                   </div>
@@ -211,12 +213,12 @@ export function DriverMonitoring() {
                 </div>
               </TableCell>
               <TableCell>
-                <Badge className={`${getFatigueColor(driver.fatigue_score)} border-0`}>
-                  {driver.fatigue_score > 7 ? 'SEVERE' : driver.fatigue_score > 4 ? 'WARNING' : 'NORMAL'}
+                <Badge className={`${getFatigueColor(driver.fatigue_score ? driver.fatigue_score * 100 : 0)} border-0`}>
+                  {driver.fatigue_score >= 0.8 ? 'SEVERE' : driver.fatigue_score >= 0.65 ? 'WARNING' : 'NORMAL'}
                 </Badge>
               </TableCell>
               <TableCell className="text-muted-foreground">
-                {driver.current_speed ? `${Math.ceil(driver.current_speed)} km/h` : '0 km/h'}
+                {driver.current_speed !== undefined && driver.current_speed !== null ? `${Math.max(0, Math.ceil(driver.current_speed))} km/h` : '0 km/h'}
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {formatLastActive(driver.updated_at)}
@@ -252,6 +254,31 @@ export function DriverMonitoring() {
       </CardContent>
     </Card>
 
+    {/* Pagination controls */}
+    <div className="flex justify-between items-center">
+      <span className="text-sm text-muted-foreground">
+        Showing Page {page + 1} of {Math.max(1, Math.ceil(filteredDrivers.length / limit))} ({filteredDrivers.length} Results)
+      </span>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page === 0}
+          onClick={() => setPage(p => Math.max(0, p - 1))}
+        >
+          Previous
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={(page + 1) * limit >= filteredDrivers.length}
+          onClick={() => setPage(p => p + 1)}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+
     <DriverChatDialog open={isChatOpen} onOpenChange={setIsChatOpen} target={chatTarget} />
 
     {/* Driver Detail Modal */}
@@ -281,7 +308,7 @@ export function DriverMonitoring() {
                     {currentDriver.status}
                   </Badge>
                   <Badge className={`${getFatigueColor(currentDriver.fatigue_score)} border-0`}>
-                    {currentDriver.fatigue_score > 7 ? 'SEVERE' : currentDriver.fatigue_score > 4 ? 'WARNING' : 'NORMAL'}
+                    {currentDriver.fatigue_score >= 0.8 ? 'SEVERE' : currentDriver.fatigue_score >= 0.65 ? 'WARNING' : 'NORMAL'}
                   </Badge>
                 </div>
               </div>
@@ -316,7 +343,7 @@ export function DriverMonitoring() {
                 <div className="text-center">
                   <MapPin className="w-12 h-12 text-primary mx-auto mb-2" />
                   <p className="text-muted-foreground">Current Location: {currentDriver.current_zone || "N/A"}</p>
-                  <p className="text-muted-foreground">Speed: {currentDriver.current_speed || "0"} km/h</p>
+                  <p className="text-muted-foreground">Speed: {currentDriver.current_speed !== undefined ? Math.max(0, Math.ceil(currentDriver.current_speed)) : 0} km/h</p>
                 </div>
               </div>
             </Card>
@@ -443,10 +470,10 @@ export function DriverMonitoring() {
                 AI-Generated Recommendations
               </h4>
               <div className="space-y-2">
-                {selectedDriver.fatigue_score > 7 && (<div className="p-3 bg-card rounded border border-destructive/20">
+                {selectedDriver.fatigue_score >= 0.8 && (<div className="p-3 bg-card rounded border border-destructive/20">
                   <p className="text-destructive">⚠️ Driver has shown critical fatigue levels. Recommend immediate 20-minute break.</p>
                 </div>)}
-                {selectedDriver.fatigue_score > 4 && selectedDriver.fatigue_score <= 7 && (<div className="p-3 bg-card rounded border border-warning/20">
+                {selectedDriver.fatigue_score >= 0.65 && selectedDriver.fatigue_score < 0.8 && (<div className="p-3 bg-card rounded border border-warning/20">
                   <p className="text-warning">⚠️ Driver has shown increased fatigue in the past hour. Recommend a 10-minute break.</p>
                 </div>)}
                 {(selectedDriver.battery_level ?? 100) < 40 && (<div className="p-3 bg-card rounded border border-warning/20">
@@ -482,8 +509,8 @@ export function DriverMonitoring() {
                 </div>
                 <div className="flex items-center justify-between p-3 bg-muted rounded">
                   <span className="text-muted-foreground">Current Fatigue Level</span>
-                  <Badge className={`${getFatigueColor(driverStats?.current_fatigue_score ?? 0)} border-0`}>
-                    {(driverStats?.current_fatigue_score ?? 0).toFixed(1)}/10
+                  <Badge className={`${getFatigueColor((driverStats?.current_fatigue_score ?? 0) * 100)} border-0`}>
+                    {((driverStats?.current_fatigue_score ?? 0) * 100).toFixed(0)}/100
                   </Badge>
                 </div>
                 <div className="flex items-center justify-between p-3 bg-muted rounded">

@@ -11,6 +11,7 @@ from app.services.driver_service import DriverService
 from app.models.driver import Driver
 from app.models.alert import Alert
 from app.models.user import User
+from app.models.sensor_record import SensorRecord
 from app.schemas.driver import (
     DriverCreate, DriverUpdate, LocationSchema, StatusUpdate,
     DriverResponse, DriverPerformanceStats, NearbyDriverResponse,
@@ -105,13 +106,19 @@ def list_drivers(
         safety_score -= min(today_harsh_braking * 2, 10)
         safety_score -= min(other_alerts * 1, 5)
         
-        # Factor in current fatigue level from driver record
-        current_fatigue = driver.fatigue_score or 0
-        if current_fatigue > 7:  # SEVERE fatigue
+        latest_sensor = db.query(SensorRecord).filter(
+            SensorRecord.driver_id == driver.driver_id,
+            SensorRecord.recorded_at >= today_start,
+            SensorRecord.fatigue_score > 0.0
+        ).order_by(SensorRecord.recorded_at.desc()).first()
+        
+        current_fatigue = latest_sensor.fatigue_score if latest_sensor else 0.0
+        
+        if current_fatigue >= 0.8:  # SEVERE fatigue
             safety_score -= 15
-        elif current_fatigue > 4:  # WARNING fatigue
+        elif current_fatigue >= 0.65:  # WARNING fatigue
             safety_score -= 8
-        elif current_fatigue > 2:  # Elevated fatigue
+        elif current_fatigue >= 0.5:  # Elevated fatigue
             safety_score -= 3
         
         safety_score = max(0, safety_score)
@@ -124,6 +131,7 @@ def list_drivers(
             'today_harsh_braking': today_harsh_braking,
             'today_speeding': today_speeding,
             'today_fatigue_alerts': today_fatigue,
+            'fatigue_score': current_fatigue,
         })
         drivers_with_stats.append(DriverWithTodayStats(**driver_data))
     

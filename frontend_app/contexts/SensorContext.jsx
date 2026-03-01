@@ -78,6 +78,7 @@ export function SensorProvider({ children }) {
     const deviceStatsIntervalRef = useRef(null);
     const locationTrackingRef = useRef(false); // Track if location is running
     const appStateRef = useRef(AppState.currentState);
+    const cameraFrameRef = useRef(null);
 
     // Break state (persists across navigation)
     const [isOnBreak, setIsOnBreak] = useState(false);
@@ -564,6 +565,11 @@ export function SensorProvider({ children }) {
             },
         };
 
+        if (cameraFrameRef.current) {
+            batch.camera_frame_data = cameraFrameRef.current;
+            cameraFrameRef.current = null; // Clear so we don't send stale frames
+        }
+
         try {
             const result = await submitSensorData(token, batch);
             if (result.fatigue_score !== null) {
@@ -577,6 +583,14 @@ export function SensorProvider({ children }) {
             console.warn("Failed to send sensor batch:", error.message);
         }
     }, [token, user, locationData]);
+
+    // Allows the app to periodically provide a camera frame for real-time fatigue analysis
+    const updateCameraFrame = useCallback((base64Frame) => {
+        cameraFrameRef.current = {
+            frame_data: base64Frame,
+            timestamp: new Date().toISOString()
+        };
+    }, []);
 
     // Handle app state changes
     useEffect(() => {
@@ -633,6 +647,7 @@ export function SensorProvider({ children }) {
         breakDuration,
         startBreak,
         endBreak,
+        updateCameraFrame,
     };
 
     return (
