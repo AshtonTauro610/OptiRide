@@ -11,21 +11,9 @@ router = APIRouter()
 def admin_create_user(
     data: AdminCreateUserRequest,
     db: Session = Depends(get_db),
-    admin = Depends(get_current_admin)
+    admin = Depends(get_current_admin_head)
 ):
-    """
-    Create a new user. Role-based access control:
-    - Regular admin (access_level 1): Can only create drivers
-    - Admin head (access_level >= 2): Can create both drivers and admins
-    """
     auth_service = AuthService()
-    
-    # Check if regular admin is trying to create another admin
-    if data.role == UserRole.ADMINISTRATOR and admin.access_level < 2:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admin heads can create administrator accounts"
-        )
     
     admin_id = admin.admin_id
     user = auth_service.create_user(data=data, db=db, admin_id=admin_id, creator_access_level=admin.access_level)
@@ -36,7 +24,7 @@ def admin_create_user(
 def admin_delete_user(
     user_id: str,
     db: Session = Depends(get_db),
-    admin = Depends(get_current_admin)
+    admin = Depends(get_current_admin_head)
 ):
     auth_service = AuthService()
     auth_service.delete_user(user_id=user_id, db=db)

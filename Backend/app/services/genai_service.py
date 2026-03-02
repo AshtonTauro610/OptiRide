@@ -14,6 +14,15 @@ class GenAIService:
     _last_generated_time: datetime = None
     _last_input_data: Dict[str, Any] = {}
     
+    # Per-driver cache states following the same pattern
+    _driver_cache: Dict[str, List[str]] = {}
+    _driver_last_time: Dict[str, datetime] = {}
+    _driver_last_input: Dict[str, Dict[str, Any]] = {}
+
+    _safety_cache: Dict[str, List[str]] = {}
+    _safety_last_time: Dict[str, datetime] = {}
+    _safety_last_input: Dict[str, Dict[str, Any]] = {}
+
     CACHE_DURATION_MINUTES = 10
     SIGNIFICANT_CHANGE_THRESHOLD = 0.15  # 15% change triggers refresh
 
@@ -182,4 +191,170 @@ class GenAIService:
         if not insights:
             insights.append("Operations appear stable. Monitor for changes.")
             
+        return insights
+
+    @classmethod
+    def generate_driver_insights(cls, metrics: Dict[str, Any]) -> List[str]:
+        driver_id = metrics.get('driver_id', 'unknown')
+        if cls._is_driver_cache_valid(driver_id, metrics):
+            logger.info(f"Returning cached driver insights for {driver_id}")
+            return cls._driver_cache[driver_id]
+
+        model = cls._get_model()
+        if not model:
+            return cls._fallback_driver_insights(metrics)
+        
+        try:
+            prompt = f"""
+            You are an AI assistant for a logistics fleet management system.
+
+            Analyze this driver's performance metrics and provide 1-2 concise, actionable insights for the fleet manager.
+
+            Driver Metrics:
+            - Orders Completed: {metrics.get('orders_completed', 0)}
+            - Orders Cancelled: {metrics.get('orders_cancelled', 0)}
+            - Total Earnings: AED {metrics.get('total_earnings', 0):.2f}
+            - Total Distance: {metrics.get('total_distance', 0):.1f} km
+            - Safety Alerts: {metrics.get('safety_alerts', 0)}
+            - Safety Score: {metrics.get('safety_score', 100)}/100
+
+            Rules:
+            1. Be direct and operational. No markdown, no bullet points, no numbering.
+            2. START directly with the first insight. No intro phrases.
+            3. Separate multiple insights with a newline.
+            4. Focus on the most critical issue first (safety > performance > earnings).
+            """
+            response = model.generate_content(prompt)
+            text = response.text.strip()
+            lines = [l.strip().lstrip("-•*").strip() for l in text.split("\n") if l.strip()]
+            filtered = [l for l in lines if not l.lower().startswith("here") and not l.endswith(":") and len(l) > 10]
+            result = filtered[:2] if filtered else cls._fallback_driver_insights(metrics)
+            
+            if result:
+                cls._driver_cache[driver_id] = result
+                cls._driver_last_time[driver_id] = datetime.utcnow()
+                cls._driver_last_input[driver_id] = metrics.copy()
+                
+            return result
+        except Exception as e:
+            logger.error(f"Error generating driver insights: {e}")
+            return cls._fallback_driver_insights(metrics)
+
+    @classmethod
+    def _is_driver_cache_valid(cls, driver_id: str, current_metrics: Dict[str, Any]) -> bool:
+        if driver_id not in cls._driver_cache or driver_id not in cls._driver_last_time:
+            return False
+            
+        elapsed = datetime.utcnow() - cls._driver_last_time[driver_id]
+        if elapsed > timedelta(minutes=cls.CACHE_DURATION_MINUTES):
+            return False
+            
+        last = cls._driver_last_input.get(driver_id, {})
+        
+        def is_diff(key):
+            old = float(last.get(key, 0))
+            new = float(current_metrics.get(key, 0))
+            if old == 0: return new > 0
+            return abs(new - old) / (old if old > 0 else 1) > cls.SIGNIFICANT_CHANGE_THRESHOLD
+
+        if is_diff('orders_completed') or is_diff('safety_alerts') or is_diff('safety_score'):
+            return False
+            
+        return True
+
+    @staticmethod
+    def _fallback_driver_insights(metrics: Dict[str, Any]) -> List[str]:
+        insights = []
+        if metrics.get('safety_score', 100) < 80:
+            insights.append(f"Safety score is {metrics.get('safety_score')}/100 with {metrics.get('safety_alerts')} alerts. Review driving behavior immediately.")
+        if metrics.get('orders_cancelled', 0) > metrics.get('orders_completed', 1) * 0.2:
+            insights.append("High cancellation rate detected. Investigate root cause.")
+        if not insights:
+            insights.append("Driver performance is within normal range.")
+        return insights
+    
+    @classmethod
+    def generate_safety_insights(cls, safety_data: Dict[str, Any]) -> List[str]:
+        driver_id = safety_data.get('driver_id', 'unknown')
+        if cls._is_safety_cache_valid(driver_id, safety_data):
+            logger.info(f"Returning cached safety insights for {driver_id}")
+            return cls._safety_cache[driver_id]
+
+        model = cls._get_model()
+        if not model:
+            return cls._fallback_safety_insights(safety_data)
+        
+        try:
+            prompt = f"""
+            You are an AI safety advisor for a food delivery fleet.
+
+            Analyze the following real-time safety event data and provide 1-2 concise, actionable recommendations for the fleet manager or driver.
+
+            Safety Data:
+            - Fatigue Score: {safety_data.get('fatigue_score', 0):.2f}/1.0 (alert level: {safety_data.get('fatigue_alert_level', 'none')})
+            - Harsh Braking: {safety_data.get('harsh_braking', False)}
+            - Harsh Acceleration: {safety_data.get('harsh_acceleration', False)}
+            - Sharp Turn: {safety_data.get('sharp_turn', False)}
+            - Sudden Impact: {safety_data.get('sudden_impact', False)}
+            - Movement Risk Level: {safety_data.get('movement_risk_level', 'low')}
+            - Speed: {safety_data.get('speed', 0)} km/h
+
+            Rules:
+            1. Be direct and urgent if risk is high. No markdown, no bullet points, no numbering.
+            2. START directly with the first recommendation. No intro phrases.
+            3. Separate multiple recommendations with a newline.
+            4. Prioritize: sudden impact > fatigue > harsh driving > speeding.
+            """
+
+            response = model.generate_content(prompt)
+            text = response.text.strip()
+            lines = [l.strip().lstrip("-•*").strip() for l in text.split("\n") if l.strip()]
+            filtered = [l for l in lines if not l.lower().startswith("here") and not l.endswith(":") and len(l) > 10]
+            result = filtered[:2] if filtered else cls._fallback_safety_insights(safety_data)
+            
+            if result:
+                cls._safety_cache[driver_id] = result
+                cls._safety_last_time[driver_id] = datetime.utcnow()
+                cls._safety_last_input[driver_id] = safety_data.copy()
+                
+            return result
+        
+        except Exception as e:
+            logger.error(f"Error generating safety insights: {e}")
+            return cls._fallback_safety_insights(safety_data)
+
+    @classmethod
+    def _is_safety_cache_valid(cls, driver_id: str, current_data: Dict[str, Any]) -> bool:
+        if driver_id not in cls._safety_cache or driver_id not in cls._safety_last_time:
+            return False
+            
+        elapsed = datetime.utcnow() - cls._safety_last_time[driver_id]
+        if elapsed > timedelta(minutes=5):
+            return False
+            
+        last = cls._safety_last_input.get(driver_id, {})
+        
+        critical_fields = ['sudden_impact', 'fatigue_alert_level', 'movement_risk_level']
+        for field in critical_fields:
+            if last.get(field) != current_data.get(field):
+                return False
+                
+        if abs(float(last.get('fatigue_score', 0)) - float(current_data.get('fatigue_score', 0))) > 0.1:
+            return False
+            
+        return True
+        
+    @staticmethod
+    def _fallback_safety_insights(safety_data: Dict[str, Any]) -> List[str]:
+        insights = []
+        if safety_data.get('sudden_impact'):
+            insights.append("Sudden impact detected. Contact driver immediately and assess for accident.")
+        if safety_data.get('fatigue_alert_level') == 'critical':
+            insights.append("Critical fatigue detected. Driver must stop and rest before continuing.")
+        elif safety_data.get('fatigue_alert_level') == 'warning':
+            insights.append("Fatigue warning detected. Recommend driver take a short break.")
+        if safety_data.get('movement_risk_level') == 'high' and not safety_data.get('sudden_impact'):
+            insights.append("Multiple harsh driving events detected. Remind driver of safe driving protocols.")
+        if not insights:
+            insights.append("No critical safety issues detected. Driver is operating normally.")
         return insights

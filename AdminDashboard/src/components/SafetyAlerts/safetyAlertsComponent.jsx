@@ -148,7 +148,7 @@ export function SafetyAlerts() {
         location: driver?.current_zone || "Unknown Zone",
         severity: severityStr,
         timestampRaw: a.timestamp,
-        timestamp: formatDistanceToNow(new Date(a.timestamp)) + " ago",
+        timestamp: new Date(`${a.timestamp}Z`.replace('ZZ', 'Z')).toLocaleString(),
         status: a.acknowledged ? "acknowledged" : "active",
         category: alertTypeToTab[a.alert_type] || "other"
       };
@@ -158,24 +158,24 @@ export function SafetyAlerts() {
   // Fetch stats for selected driver
   const { data: selectedDriverStats } = useDriverPerformanceStats(selectedDriverId);
   const selectedDriver = selectedDriverId ? driversMap[selectedDriverId] : null;
-  
+
   const filteredAlerts = useMemo(() => {
     const matches = alerts.filter((alert) => {
       let matchesTab = activeTab === "all";
       if (!matchesTab) {
         if (activeTab === "behavior") {
-           matchesTab = alert.type.includes("harsh");
+          matchesTab = alert.type.includes("harsh");
         } else if (activeTab === "fall") {
-           matchesTab = alert.type === "unusual_movement" || alert.type === "fall";
+          matchesTab = alert.type === "unusual_movement" || alert.type === "fall";
         } else {
-           matchesTab = alert.type === activeTab;
+          matchesTab = alert.type === activeTab;
         }
       }
 
       const matchesSearch = alert.driver.toLowerCase().includes(searchQuery.toLowerCase()) ||
         alert.driverId.toLowerCase().includes(searchQuery.toLowerCase()) ||
         alert.title.toLowerCase().includes(searchQuery.toLowerCase());
-      
+
       const matchesSeverity = severityFilter === "all" || alert.severity === severityFilter;
       return matchesTab && matchesSearch && matchesSeverity;
     });
@@ -413,8 +413,8 @@ export function SafetyAlerts() {
                 <Badge className={getStatusBadge(selectedDriver.status)}>
                   {selectedDriver.status.replace("_", " ").toUpperCase()}
                 </Badge>
-                <Badge className={getFatigueBadge(selectedDriver.fatigue_score > 7 ? 'severe' : selectedDriver.fatigue_score > 4 ? 'warning' : 'normal')}>
-                  Fatigue: {selectedDriver.fatigue_score > 7 ? 'SEVERE' : selectedDriver.fatigue_score > 4 ? 'WARNING' : 'NORMAL'}
+                <Badge className={getFatigueBadge(selectedDriver.fatigue_score >= 0.8 ? 'severe' : selectedDriver.fatigue_score >= 0.65 ? 'warning' : 'normal')}>
+                  Fatigue: {selectedDriver.fatigue_score >= 0.8 ? 'SEVERE' : selectedDriver.fatigue_score >= 0.65 ? 'WARNING' : 'NORMAL'}
                 </Badge>
               </div>
             </div>
@@ -436,7 +436,7 @@ export function SafetyAlerts() {
               <div className="text-center">
                 <MapPin className="w-12 h-12 text-blue-600 mx-auto mb-2" />
                 <p className="text-muted-foreground">Current Location: {selectedDriver.current_zone || "Unknown"}</p>
-                <p className="text-muted-foreground">Speed: {selectedDriver.current_speed ? selectedDriver.current_speed.toFixed(1) : 0} km/h</p>
+                <p className="text-muted-foreground">Speed: {Math.max(0, selectedDriver.current_speed || 0).toFixed(1)} km/h</p>
               </div>
             </div>
           </Card>
@@ -508,10 +508,10 @@ export function SafetyAlerts() {
               AI-Generated Recommendations
             </h4>
             <div className="space-y-2">
-              {selectedDriver.fatigue_score > 7 && (<div className="p-3 bg-card rounded border border-red-500/20">
+              {selectedDriver.fatigue_score >= 0.8 && (<div className="p-3 bg-card rounded border border-red-500/20">
                 <p className="text-red-700 dark:text-red-400">⚠️ Driver has shown critical fatigue levels. Recommend immediate 20-minute break.</p>
               </div>)}
-              {selectedDriver.fatigue_score > 4 && selectedDriver.fatigue_score <= 7 && (<div className="p-3 bg-card rounded border border-orange-500/20">
+              {selectedDriver.fatigue_score >= 0.65 && selectedDriver.fatigue_score < 0.8 && (<div className="p-3 bg-card rounded border border-orange-500/20">
                 <p className="text-orange-700 dark:text-orange-400">⚠️ Driver has shown increased fatigue in the past hour. Recommend a 10-minute break.</p>
               </div>)}
               <div className="p-3 bg-card rounded border border-blue-500/20">
@@ -529,8 +529,8 @@ export function SafetyAlerts() {
                 <Badge variant="secondary">{selectedDriverStats?.today_safety_alerts ?? 0}</Badge>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
-                <span className="text-muted-foreground">Fatigue Score (Avg)</span>
-                <Badge variant="secondary">{selectedDriverStats?.average_fatigue_score?.toFixed(1) ?? "0.0"}</Badge>
+                <span className="text-muted-foreground">Fatigue Score</span>
+                <Badge variant="secondary">{((selectedDriverStats?.current_fatigue_score ?? 0) * 100).toFixed(0)}/100</Badge>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
                 <span className="text-muted-foreground">Total Orders (Lifetime)</span>

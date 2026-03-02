@@ -89,14 +89,6 @@ export const analyticsService = {
         }
     },
 
-    // ============================================
-    // NEW AGGREGATED ANALYTICS ENDPOINTS
-    // ============================================
-
-    /**
-     * Get aggregated alerts summary for analytics dashboard
-     * @param {string} period - 'today', 'last_7_days', 'this_month'
-     */
     async getAlertsSummary(period = 'last_7_days') {
         try {
             const response = await apiClient.get('/analytics/alerts/summary', {
@@ -108,10 +100,6 @@ export const analyticsService = {
         }
     },
 
-    /**
-     * Get fleet-wide safety score with component breakdown
-     * @param {string} period - 'today', 'last_7_days', 'this_month'
-     */
     async getSafetyScore(period = 'last_7_days') {
         try {
             const response = await apiClient.get('/analytics/safety/score', {
@@ -123,11 +111,7 @@ export const analyticsService = {
         }
     },
 
-    /**
-     * Get top performing drivers
-     * @param {string} period - 'today', 'last_7_days', 'this_month'
-     * @param {number} limit - Number of top performers to return (1-20)
-     */
+
     async getTopPerformers(period = 'last_7_days', limit = 5) {
         try {
             const response = await apiClient.get('/analytics/drivers/top-performers', {
@@ -139,10 +123,6 @@ export const analyticsService = {
         }
     },
 
-    /**
-     * Get demand forecast for next N hours
-     * @param {number} hours - Number of hours to forecast (1-24)
-     */
     async getDemandForecast(hours = 12) {
         try {
             const response = await apiClient.get('/analytics/demand/forecast', {
@@ -154,10 +134,6 @@ export const analyticsService = {
         }
     },
 
-    /**
-     * Get hourly actual vs predicted demand for a specific date
-     * @param {string|null} date - Target date in YYYY-MM-DD format, null for today
-     */
     async getDemandHistory(date = null) {
         try {
             const params = {};
@@ -169,15 +145,20 @@ export const analyticsService = {
         }
     },
 
-    /**
-     * Get hourly actual vs predicted demand per zone for a specific date
-     * @param {string|null} date - Target date in YYYY-MM-DD format, null for today
-     */
     async getZoneDemandHistory(date = null) {
         try {
             const params = {};
             if (date) params.date = date;
             const response = await apiClient.get('/analytics/demand/zones', { params });
+            return response.data;
+        } catch (error) {
+            throw handleApiError(error);
+        }
+    },
+
+    async getPredictiveRisks() {
+        try {
+            const response = await apiClient.get('/analytics/predictive-risks');
             return response.data;
         } catch (error) {
             throw handleApiError(error);

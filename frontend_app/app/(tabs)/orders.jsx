@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { acceptOrder, rejectOrder } from "@/services/orders";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Modal,
   Pressable,
@@ -72,7 +73,12 @@ export default function OrdersScreen() {
       }
       await refetchOrders();
     } catch (e) {
-      console.error("Order action failed", e);
+      console.warn("Order action failed:", e?.details?.detail || e?.message);
+      const message = e?.details?.detail || e?.message || "Something went wrong. Please try again.";
+      Alert.alert(
+        order.actionType === "pickup" ? "Cannot Confirm Pickup" : "Cannot Complete Delivery",
+        message
+      );
     }
   };
 
@@ -230,8 +236,8 @@ export default function OrdersScreen() {
                   </TouchableOpacity>
                 ) : order.status === "pending" ? (
                   <View style={styles.pendingActions}>
-                    <TouchableOpacity 
-                      style={styles.acceptButton} 
+                    <TouchableOpacity
+                      style={styles.acceptButton}
                       onPress={async () => {
                         if (!token) return;
                         setAcceptingOrderId(order.id);
@@ -256,8 +262,8 @@ export default function OrdersScreen() {
                         <Text style={styles.acceptButtonText}>Accept</Text>
                       )}
                     </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={styles.declineButton} 
+                    <TouchableOpacity
+                      style={styles.declineButton}
                       onPress={async () => {
                         if (!token) return;
                         setRejectingOrderId(order.id);

@@ -4,6 +4,8 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { theme } from '@/constants/theme';
 import { useSensors } from '@/contexts/SensorContext';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { submitSensorData } from '@/services/safety';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function FatigueDetectionScreen() {
   const router = useRouter();
@@ -16,6 +18,10 @@ export default function FatigueDetectionScreen() {
   const hasStartedMonitoring = useRef(false);
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraReady, setCameraReady] = useState(false);
+  const cameraRef = useRef(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const { token, user } = useAuth();
+  const [fatigueMessage, setFatigueMessage] = useState('Position your face in the frame');
 
   const orderId = params.orderId;
 
@@ -42,12 +48,77 @@ export default function FatigueDetectionScreen() {
       ])
     ).start();
 
-    const timer = setTimeout(() => {
-      handleFatigueCheckPassed();
-    }, 4000); // Give more time for camera to load
-
-    return () => clearTimeout(timer);
   }, [scanAnimation]);
+
+  useEffect(() => {
+    if (cameraReady && token && user && !isPassed && !isAnalyzing) {
+      performRealFatigueCheck();
+    }
+  }, [cameraReady, token, user, isPassed, isAnalyzing]);
+
+  const performRealFatigueCheck = async () => {
+    if (!cameraRef.current || !cameraReady) return;
+    setIsAnalyzing(true);
+    setFatigueMessage("Analyzing facial features...");
+
+    try {
+      // Small artificial delay to ensure the camera buffers a frame before capturing
+      await new Promise(resolve => setTimeout(resolve, 500));
+      const photo = await cameraRef.current.takePictureAsync({ base64: true, quality: 0.5 });
+
+      const payload = {
+        driver_id: user.driver_id,
+        session_id: `session_check_${Date.now()}`,
+        accelerometer_data: [],
+        gyroscope_data: [],
+        location_data: {
+          latitude: 0,
+          longitude: 0,
+          speed: 0,
+          timestamp: new Date().toISOString()
+        },
+        camera_frame_data: {
+          frame_data: photo.base64,
+          timestamp: new Date().toISOString()
+        }
+      };
+
+      const result = await submitSensorData(token, payload);
+
+      console.log(`Fatigue API result: Score = ${result.fatigue_score}, Recommendation = ${result.recommendation}`);
+
+      if (result.fatigue_score < 0.65) {
+        setFatigueMessage('Fatigue check passed');
+        handleFatigueCheckPassed();
+      } else if (result.fatigue_score < 0.80) {
+        setFatigueMessage(result.recommendation || 'Moderate fatigue detected. Consider taking a short break.');
+        // Still pass after 3 seconds, but force them to read the warning
+        setTimeout(() => {
+          handleFatigueCheckPassed();
+        }, 3000);
+      } else {
+        setFatigueMessage(result.recommendation || 'Critical fatigue! Order rejected. You are on break.');
+        // Do not pass the check. Reject them to the home screen after 3 seconds.
+        setTimeout(() => {
+          setIsAnalyzing(false);
+          router.replace('/(tabs)/home');
+        }, 3000);
+      }
+
+    } catch (e) {
+      console.warn("Fatigue API check failed:", e);
+      setFatigueMessage(`Error: ${e.message || 'Check failed. Retrying...'}`);
+
+      // Still auto-pass after 4 secs if it's strictly a DEV test, otherwise they might get completely stuck
+      setTimeout(() => {
+        setIsAnalyzing(false);
+        // Only mock pass in web dev, force them to fix it on native
+        if (Platform.OS === 'web') {
+          handleFatigueCheckPassed();
+        }
+      }, 4000);
+    }
+  };
 
   const handleFatigueCheckPassed = async () => {
     setIsPassed(true);
@@ -81,8 +152,8 @@ export default function FatigueDetectionScreen() {
     outputRange: [-100, 100],
   });
 
-  // Camera not available (web or no permission yet granted)
-  const showCameraFallback = Platform.OS === 'web' || !permission?.granted;
+  // Camera not available (web or no permission yet granted or permission is loading)
+  const showCameraFallback = Platform.OS === 'web' || !permission || !permission.granted;
 
   return (
     <View style={styles.container}>
@@ -92,18 +163,11 @@ export default function FatigueDetectionScreen() {
         <View style={styles.circle}>
           {!isPassed ? (
             <>
-              {showCameraFallback ? (
-                // Fallback for web or no camera permission
-                <View style={styles.cameraFallback}>
-                  <View style={styles.face} />
-                  <Text style={styles.permissionText}>
-                    {!permission?.granted ? 'Camera permission required' : 'Camera not available'}
-                  </Text>
-                </View>
-              ) : (
-                // Show actual camera feed - using View wrapper with proper dimensions
-                <View style={styles.cameraContainer}>
+              {/* Always render CameraView if we don't have a fallback state, but adjust visibility via styles if passed */}
+              {!showCameraFallback ? (
+                <View style={[styles.cameraContainer, isPassed ? { opacity: 0 } : {}]}>
                   <CameraView
+                    ref={cameraRef}
                     style={styles.camera}
                     facing="front"
                     onCameraReady={() => {
@@ -111,6 +175,13 @@ export default function FatigueDetectionScreen() {
                       setCameraReady(true);
                     }}
                   />
+                </View>
+              ) : (
+                <View style={styles.cameraFallback}>
+                  <View style={styles.face} />
+                  <Text style={styles.permissionText}>
+                    {!permission?.granted ? 'Camera permission required' : 'Camera not available'}
+                  </Text>
                 </View>
               )}
               <Animated.View
@@ -135,23 +206,27 @@ export default function FatigueDetectionScreen() {
       <Text style={styles.instruction}>
         {isPassed
           ? (isStartingSensors ? 'Starting safety monitoring...' : 'Fatigue check passed')
-          : 'Position your face in the frame'}
+          : fatigueMessage}
       </Text>
 
-      {!isPassed && (
-        <View style={styles.progressContainer}>
-          <Text style={styles.progressText}>
-            {cameraReady ? 'Analyzing...' : 'Initializing camera...'}
-          </Text>
-        </View>
-      )}
+      {
+        !isPassed && (
+          <View style={styles.progressContainer}>
+            <Text style={styles.progressText}>
+              {cameraReady ? 'Analyzing...' : 'Initializing camera...'}
+            </Text>
+          </View>
+        )
+      }
 
-      {isPassed && !isStartingSensors && (
-        <Text style={styles.caption}>
-          Safety monitoring active • Opening navigation
-        </Text>
-      )}
-    </View>
+      {
+        isPassed && !isStartingSensors && (
+          <Text style={styles.caption}>
+            Safety monitoring active • Opening navigation
+          </Text>
+        )
+      }
+    </View >
   );
 }
 

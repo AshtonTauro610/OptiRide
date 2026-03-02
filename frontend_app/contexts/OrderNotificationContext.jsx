@@ -3,98 +3,105 @@ import { useAuth } from "@/contexts/AuthContext";
 import { fetchOfferedOrders } from "@/services/orders";
 import { useRouter } from "expo-router";
 import { AppState } from "react-native";
+import socket from "@/services/socket";
 
 const OrderNotificationContext = createContext(null);
-
-const POLL_INTERVAL = 10000; // Check every 10 seconds
 
 export function OrderNotificationProvider({ children }) {
     const { token, isAuthenticated } = useAuth();
     const router = useRouter();
     const [currentOffer, setCurrentOffer] = useState(null);
-    const [isPolling, setIsPolling] = useState(false);
-    const pollIntervalRef = useRef(null);
     const appState = useRef(AppState.currentState);
 
-    const checkForOffers = useCallback(async () => {
+    // Initial sync / background recovery sync
+    const syncOffers = useCallback(async () => {
         if (!token) return;
 
         try {
             const offers = await fetchOfferedOrders(token);
             if (offers && offers.length > 0) {
-                // Take the first offered order
                 const offer = offers[0];
                 if (!currentOffer || currentOffer.order_id !== offer.order_id) {
                     setCurrentOffer(offer);
-                    // Navigate to notification screen
                     router.push({
                         pathname: "/order-notification",
                         params: { orderId: offer.order_id },
                     });
                 }
+            } else if (currentOffer) {
+                // Offer disappeared
+                setCurrentOffer(null);
             }
         } catch (error) {
             console.error("Error checking for offers:", error);
         }
     }, [token, currentOffer, router]);
 
-    const startPolling = useCallback(() => {
-        if (pollIntervalRef.current) return;
-
-        setIsPolling(true);
-        // Check immediately
-        checkForOffers();
-        // Then poll at interval
-        pollIntervalRef.current = setInterval(checkForOffers, POLL_INTERVAL);
-    }, [checkForOffers]);
-
-    const stopPolling = useCallback(() => {
-        if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-        }
-        setIsPolling(false);
-    }, []);
-
-    const clearCurrentOffer = useCallback(() => {
-        setCurrentOffer(null);
-    }, []);
-
-    // Start/stop polling based on auth state
+    // Setup Socket Listeners
     useEffect(() => {
-        if (isAuthenticated && token) {
-            startPolling();
-        } else {
-            stopPolling();
+        if (!isAuthenticated || !token) {
+            setCurrentOffer(null);
+            return;
         }
 
-        return () => stopPolling();
-    }, [isAuthenticated, token, startPolling, stopPolling]);
+        // Perform initial sync on mount or auth
+        syncOffers();
 
-    // Handle app state changes (pause polling when backgrounded)
+        // Socket listener for instantaneous broadcast push
+        const handleNewOffer = (offerData) => {
+            console.log("[Sockets] Received order_offer:", offerData.order_id);
+            setCurrentOffer(offerData);
+            router.push({
+                pathname: "/order-notification",
+                params: { orderId: offerData.order_id },
+            });
+        };
+
+        // Socket listener for when someone else accepted the broadcast
+        const handleOfferExpired = (data) => {
+            const orderId = typeof data === 'string' ? data : data.order_id;
+            console.log("[Sockets] Received order_offer_expired:", orderId);
+            setCurrentOffer(prev => {
+                if (prev && prev.order_id === orderId) {
+                    return null;
+                }
+                return prev;
+            });
+        };
+
+        socket.on("order_offer", handleNewOffer);
+        socket.on("order_offer_expired", handleOfferExpired);
+
+        return () => {
+            socket.off("order_offer", handleNewOffer);
+            socket.off("order_offer_expired", handleOfferExpired);
+        };
+    }, [isAuthenticated, token, router]); // currentOffer left out specifically so we don't rebind socket listeners constantly
+
+    // Handle app state changes (sync when waking up from background)
     useEffect(() => {
         const subscription = AppState.addEventListener("change", (nextAppState) => {
             if (appState.current.match(/inactive|background/) && nextAppState === "active") {
-                // App came to foreground - check immediately
                 if (isAuthenticated && token) {
-                    checkForOffers();
+                    syncOffers();
                 }
             }
             appState.current = nextAppState;
         });
 
         return () => subscription?.remove();
-    }, [isAuthenticated, token, checkForOffers]);
+    }, [isAuthenticated, token, syncOffers]);
+
+    const clearCurrentOffer = useCallback(() => {
+        setCurrentOffer(null);
+    }, []);
 
     return (
         <OrderNotificationContext.Provider
             value={{
                 currentOffer,
-                isPolling,
-                checkForOffers,
                 clearCurrentOffer,
-                startPolling,
-                stopPolling,
+                syncOffers
             }}
         >
             {children}

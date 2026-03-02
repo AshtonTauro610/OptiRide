@@ -28,8 +28,13 @@ class AdminCreateUserRequest(BaseModel):
     phone_number : Optional[str] = None
     role : UserRole
     name : Optional[str] = None
+    # Administrator-specific
     department : Optional[str] = None
-    access_level : Optional[int] = Field(default=1, ge=1, le=5)  # Only used for administrators
+    access_level : Optional[int] = Field(default=1, ge=1, le=5)
+    admin_role : Optional[str] = None
+    # Driver-specific
+    vehicle_type : Optional[str] = None
+    license_plate : Optional[str] = None
 
     @field_validator('phone_number')
     @classmethod

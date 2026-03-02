@@ -13,7 +13,7 @@ from app.schemas.analytics import (
     TrendData, ReportRequest, ReportResponse, PerformanceAnalysis,
     MetricPeriod, ForecastResponse, AlertsSummaryResponse,
     SafetyScoreResponse, TopPerformersResponse, DemandForecastResponse,
-    DemandHistoryResponse
+    DemandHistoryResponse, PredictiveRisksResponse
 )
 
 router = APIRouter()
@@ -147,21 +147,12 @@ def get_zone_analytics_summary(
         "metrics": metrics
     }
 
-
-# ============================================
-# NEW AGGREGATED ANALYTICS ENDPOINTS
-# ============================================
-
 @router.get("/alerts/summary", response_model=AlertsSummaryResponse)
 def get_alerts_summary(
     period: str = Query("last_7_days", description="Period: today, last_7_days, this_month"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Get aggregated alerts summary for analytics dashboard.
-    Returns alerts grouped by type, day, zone, and severity.
-    """
     analytics_service = AnalyticsService(db)
     return analytics_service.get_alerts_summary(period=period)
 
@@ -173,15 +164,11 @@ def get_safety_score(
     current_user: User = Depends(get_current_admin)
 ):
     """
-    Calculate and return fleet-wide safety score.
-    
     Safety score is calculated based on:
     - Fatigue alerts (25% weight)
     - Incident severity and count (35% weight)
     - Alert acknowledgment compliance (20% weight)
     - Driving behavior patterns (20% weight)
-    
-    Returns overall score (0-100), grade (A+ to F), and component breakdowns.
     """
     analytics_service = AnalyticsService(db)
     return analytics_service.get_safety_score(period=period)
@@ -195,8 +182,6 @@ def get_top_performers(
     current_user: User = Depends(get_current_admin)
 ):
     """
-    Get top performing drivers based on efficiency score.
-    
     Efficiency score factors:
     - Order volume (30% weight)
     - Delivery speed (25% weight)
@@ -213,12 +198,6 @@ def get_demand_forecast(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Get demand forecast for the next N hours.
-    
-    Uses historical patterns and time-based adjustments to predict demand.
-    Returns forecasts with confidence levels and operational recommendations.
-    """
     analytics_service = AnalyticsService(db)
     return analytics_service.get_demand_forecast(hours=hours)
 
@@ -229,15 +208,8 @@ def get_demand_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Get hourly actual vs predicted demand for a specific date.
-    For today: actual demand line stops at the current hour.
-    For past days: actual demand shown for all 24 hours.
-    Use date navigation to go back up to 30 days.
-    """
     analytics_service = AnalyticsService(db)
     return analytics_service.get_demand_history(target_date=date)
-
 
 @router.get("/demand/zones")
 def get_zone_demand_history(
@@ -245,9 +217,14 @@ def get_zone_demand_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
-    """
-    Get hourly actual vs ML-predicted demand per zone for a specific date.
-    Returns separate data for each zone to render zone-level demand charts.
-    """
     analytics_service = AnalyticsService(db)
     return analytics_service.get_zone_demand_history(target_date=date)
+
+@router.get("/predictive-risks", response_model=PredictiveRisksResponse)
+def get_predictive_risks(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    analytics_service = AnalyticsService(db)
+    return analytics_service.get_predictive_risks()
+

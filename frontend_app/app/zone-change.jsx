@@ -1,7 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import MapView, { Polygon } from 'react-native-maps';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { theme } from '@/constants/theme';
@@ -10,30 +9,27 @@ import { zones } from '@/mocks/zones';
 export default function ZoneChangeScreen() {
   const router = useRouter();
   const { zoneId } = useLocalSearchParams();
-  const newZone = zones.find(z => z.code === zoneId) || zones.find(z => z.code === 'A3');
+
+  // Try to match by code or id; fallback to displaying the zone ID directly
+  const matchedZone = zones.find(z => z.code === zoneId || z.id === zoneId);
+
+  // Format zone name for display (e.g. "zone_dubai_marina" → "Dubai Marina")
+  const formatZoneName = (id) => {
+    if (!id) return 'Unknown';
+    return id
+      .replace(/^zone_/, '')
+      .split('_')
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+      .join(' ');
+  };
+
+  const zoneName = matchedZone?.name || formatZoneName(zoneId);
+  const zoneCode = matchedZone?.code || zoneId;
 
   return (
     <View style={styles.container}>
-      <MapView
-        provider="google"
-        style={styles.map}
-        initialRegion={{
-          latitude: 25.1952,
-          longitude: 55.2721,
-          latitudeDelta: 0.1,
-          longitudeDelta: 0.1,
-        }}
-      >
-        {zones.map((zone) => (
-          <Polygon
-            key={zone.id}
-            coordinates={zone.coordinates}
-            fillColor={`${zone.color}40`}
-            strokeColor={zone.color}
-            strokeWidth={2}
-          />
-        ))}
-      </MapView>
+      {/* Background layer */}
+      <View style={styles.background} />
 
       <TouchableOpacity
         style={styles.closeButton}
@@ -45,10 +41,10 @@ export default function ZoneChangeScreen() {
 
       <View style={styles.cardContainer}>
         <Card style={styles.notificationCard}>
-          <Text style={styles.title}>Zone Change</Text>
+          <Text style={styles.title}>Zone Allocation</Text>
           <Text style={styles.message}>
-            Due to high demand you have been reassigned to Zone {newZone?.code}.
-            Please proceed to Zone {newZone?.code} to continue accepting orders.
+            You have been allocated to {zoneName}.
+            Please proceed to your assigned zone to start accepting orders.
           </Text>
           <View style={styles.buttonRow}>
             <Button
@@ -59,7 +55,10 @@ export default function ZoneChangeScreen() {
             />
             <Button
               title="Navigate"
-              onPress={() => router.push('/zone-navigation')}
+              onPress={() => {
+                // Return to the main map screen which will automatically show the zone route
+                router.replace('/(tabs)/map');
+              }}
               variant="primary"
               style={styles.button}
             />
@@ -74,8 +73,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  map: {
-    flex: 1,
+  background: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
   },
   closeButton: {
     position: 'absolute',

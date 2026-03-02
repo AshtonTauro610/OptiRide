@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pydantic import BaseModel
 from datetime import datetime
 from app.db.database import get_db
 from app.core.dependencies import get_current_driver, get_current_admin, get_current_user
@@ -10,7 +11,13 @@ from app.models.driver import Driver
 from app.services.order_service import OrderService
 from app.schemas.order import OrderAssign, OrderCreate, OrderDeliver, OrderPickup, OrderResponse, OrderUpdate, OrderStats, OrderStatus
 from geoalchemy2.functions import ST_X, ST_Y
+from app.models.order import Order
+from geoalchemy2.functions import ST_Distance
 
+class DispatchOrderRequest(BaseModel):
+    driver_id: str
+    zone_id: str
+    
 router = APIRouter()
 
 @router.post("/", response_model=OrderResponse)
@@ -40,27 +47,7 @@ async def webhook_create_order(
     driver_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """
-    Order received notif as requested by Patrick
-    Example Webhook JSON payload:
-    {
-        "pickup_address": "123 Main St",
-        "pickup_latitude": 40.7128,
-        "pickup_longitude": -74.0060,
-        "dropoff_address": "456 Park Ave",
-        "dropoff_latitude": 40.7589,
-        "dropoff_longitude": -73.9851,
-        "customer_name": "John Doe",
-        "customer_contact": "+1234567890",
-        "restaurant_name": "Pizza Palace",
-        "restaurant_contact": "+0987654321",
-        "price": 25.50
-    }
-    
-    Query params:
-    - auto_assign=true: Assign to nearest available driver
-    - driver_id=<uuid>: Assign to specific driver (overrides auto_assign)
-    """
+
     order_service = OrderService(db)
     order = order_service.create_order(order_data)
     
@@ -256,12 +243,31 @@ def get_my_offered_orders(
     db: Session = Depends(get_db),
     driver: Driver = Depends(get_current_driver)
 ):
-    from app.models.order import Order
-    orders = db.query(Order).filter(
+    
+    # Exclusive offers assigned to this driver
+    exclusive = db.query(Order).filter(
         Order.driver_id == driver.driver_id,
         Order.status == OrderStatus.offered.value
     ).all()
-    return orders
+    
+    # Broadcast offers (driver_id is NULL) within 10km
+    broadcast = []
+    if driver.location is not None:
+        broadcast = db.query(Order).filter(
+            Order.driver_id.is_(None),
+            Order.status == OrderStatus.offered.value,
+            ST_Distance(Order.pickup, driver.location, True) <= 10000  # 10km in meters
+        ).all()
+    
+    # Combine and deduplicate
+    seen = set()
+    combined = []
+    for o in exclusive + broadcast:
+        if o.order_id not in seen:
+            seen.add(o.order_id)
+            combined.append(o)
+    
+    return combined
 
 @router.get("/driver/orders")
 def get_driver_orders(
@@ -321,4 +327,14 @@ async def deliver_order(
     
     # Notify customer about delivery
     await socket_manager.notify_order_delivered(order.order_id)
+    return order
+
+@router.post("/dispatch")
+async def dispatch_order(
+    request: DispatchOrderRequest,
+    db: Session = Depends(get_db),
+    admin = Depends(get_current_admin)
+):
+    order_service = OrderService(db)
+    order = order_service.dispatch_orders(request.driver_id, request.zone_id)
     return order
