@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 from geoalchemy2.functions import ST_Distance, ST_X, ST_Y
 from geoalchemy2.elements import WKTElement
 from datetime import datetime, timedelta
+from app.core.redis_client import redis_client
 from app.core.kafka import kafka_producer
 from app.models.driver import Driver
 from app.models.order import Order
@@ -17,6 +18,7 @@ from app.schemas.driver import (
     ShiftStart, ShiftEnd, ShiftSummary, BreakRequest, DriverStatus, DutyStatus, TelemetryUpdate
 )
 from app.services.allocation_service import AllocationService
+
 
 class DriverService:
     def __init__(self, db: Session):
@@ -94,7 +96,16 @@ class DriverService:
         if location_data.heading is not None:
             driver.heading = location_data.heading
 
-        self.db.commit()
+        # Throttling logic using Redis (30s TTL)
+        throttle_key = f"driver_location_throttle:{driver_id}"
+        try:
+            is_throttled = redis_client.get(throttle_key)
+            if not is_throttled:
+                self.db.commit()
+                redis_client.setex(throttle_key, 30, "1")
+        except redis.exceptions.ConnectionError:
+            # Fallback to direct DB commit if Redis is down
+            self.db.commit()
 
         kafka_producer.publish("driver-location", {
             "driver_id": driver.driver_id,

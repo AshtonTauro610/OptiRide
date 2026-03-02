@@ -251,6 +251,7 @@ class SafetyScoreResponse(BaseModel):
     fatigue_alerts_count: int
     speeding_events: int
     harsh_braking_events: int
+    peak_speeding_hour: Optional[str] = None
     
     # Benchmarks
     industry_benchmark: float
@@ -306,3 +307,26 @@ class DemandHistoryResponse(BaseModel):
     total_actual: int
     total_predicted: float    
     recommendations: List[str] = []
+
+class HighRiskZone(BaseModel):
+    zone_id: str
+    zone_name: str
+    risk_level: str  # 'Critical', 'High', 'Medium', 'Low'
+    reason: str
+
+class AtRiskDriver(BaseModel):
+    driver_id: str
+    name: str
+    continuous_hours: float
+    risk_level: str  # 'Critical', 'High', 'Medium'
+
+class WeatherImpact(BaseModel):
+    condition: str
+    timeframe: str
+    impact_text: str
+    icon_type: str   # 'rain', 'temperature', 'optimal'
+
+class PredictiveRisksResponse(BaseModel):
+    high_risk_zones: List[HighRiskZone]
+    drivers_at_risk: List[AtRiskDriver]
+    weather_impacts: List[WeatherImpact]

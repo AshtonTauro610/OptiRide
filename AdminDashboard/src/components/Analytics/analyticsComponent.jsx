@@ -16,7 +16,8 @@ import {
   useTopPerformers,
   useDemandForecast,
   useDemandHistory,
-  useZoneDemandHistory
+  useZoneDemandHistory,
+  usePredictiveRisks
 } from "@/utils/hooks/use-api";
 
 // Helper: format date to YYYY-MM-DD
@@ -53,6 +54,7 @@ export function Analytics() {
   const { data: demandForecast, refetch: refetchDemandForecast } = useDemandForecast(12);
   const { data: demandHistory, refetch: refetchDemandHistory } = useDemandHistory(selectedDate);
   const { data: zoneDemandHistory, refetch: refetchZoneDemandHistory } = useZoneDemandHistory(selectedDate);
+  const { data: predictiveRisks, refetch: refetchRisks } = usePredictiveRisks();
 
   // Auto-refresh data every 10 seconds
   usePolling(() => {
@@ -67,6 +69,7 @@ export function Analytics() {
     refetchDemandForecast();
     refetchDemandHistory();
     refetchZoneDemandHistory();
+    refetchRisks();
   }, 10000);
 
   // Date navigation helpers
@@ -166,14 +169,7 @@ export function Analytics() {
       value: item.count,
       color: ['#ef4444', '#f97316', '#eab308', '#dc2626', '#6366f1', '#22c55e'][index % 6]
     }))
-    : [
-      // Fallback hardcoded data if no alerts (for demo purposes)
-      { name: "Fatigue", value: 145, color: "#ef4444" },
-      { name: "Speeding", value: 98, color: "#f97316" },
-      { name: "Harsh Braking", value: 76, color: "#eab308" },
-      { name: "Accidents", value: 23, color: "#dc2626" },
-      { name: "Device Issues", value: 54, color: "#6366f1" },
-    ];
+    : [];
 
   // Alerts by day - Now from backend
   const fatigueData = alertsSummary?.by_day?.length > 0
@@ -181,16 +177,7 @@ export function Analytics() {
       day: item.day,
       alerts: item.count
     }))
-    : [
-      // Fallback hardcoded data if no alerts
-      { day: "Mon", alerts: 12 },
-      { day: "Tue", alerts: 15 },
-      { day: "Wed", alerts: 22 },
-      { day: "Thu", alerts: 18 },
-      { day: "Fri", alerts: 28 },
-      { day: "Sat", alerts: 32 },
-      { day: "Sun", alerts: 25 },
-    ];
+    : [];
 
   // Incidents by zone - Now from backend
   const incidentByZone = alertsSummary?.by_zone?.length > 0
@@ -198,15 +185,7 @@ export function Analytics() {
       zone: item.zone_name || item.zone_id,
       incidents: item.count
     }))
-    : [
-      // Fallback hardcoded data
-      { zone: "Zone A3", incidents: 45 },
-      { zone: "Zone B1", incidents: 38 },
-      { zone: "Zone C2", incidents: 52 },
-      { zone: "Zone D5", incidents: 28 },
-      { zone: "Zone E2", incidents: 35 },
-      { zone: "Zone F9", incidents: 42 },
-    ];
+    : [];
 
   // Top Performers - Now from backend
   const driverEfficiency = topPerformers?.drivers?.length > 0
@@ -215,14 +194,7 @@ export function Analytics() {
       score: driver.efficiency_score,
       orders: driver.orders_completed
     }))
-    : [
-      // Fallback hardcoded data
-      { name: "Ahmed Khan", score: 95, orders: 145 },
-      { name: "Samuel Martinez", score: 94, orders: 138 },
-      { name: "David Chen", score: 92, orders: 142 },
-      { name: "L. Mathew", score: 89, orders: 128 },
-      { name: "J. Francis", score: 88, orders: 125 },
-    ];
+    : [];
 
   // Demand history data (24h for selected date)
   const demandChartData = demandHistory?.data || [];
@@ -241,15 +213,20 @@ export function Analytics() {
   // Check if we have meaningful comparison data
   const hasComparisonData = Math.abs(ordersChangePct) < 500;
 
-  const StatCard = ({ title, value, change, icon: Icon, trend, }) => {
+  const StatCard = ({ title, value, change, icon: Icon, trend }) => {
+    // If no change value is passed, fallback to a neutral badge
+    const displayChange = change || "--";
+    const displayTrend = change ? trend : "neutral";
+
     return (<Card className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <div className={`p-3 rounded-lg ${trend === "up" ? "bg-green-100 dark:bg-green-900/20" : "bg-red-100 dark:bg-red-900/20"}`}>
-          <Icon className={`w-5 h-5 ${trend === "up" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`} />
+        <div className={`p-3 rounded-lg ${displayTrend === "up" ? "bg-green-100 dark:bg-green-900/20" : displayTrend === "down" ? "bg-red-100 dark:bg-red-900/20" : "bg-muted text-muted-foreground"}`}>
+          <Icon className={`w-5 h-5 ${displayTrend === "up" ? "text-green-600 dark:text-green-400" : displayTrend === "down" ? "text-red-600 dark:text-red-400" : ""}`} />
         </div>
-        <Badge className={trend === "up" ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" : "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400"}>
-          {change}
-          {trend === "up" ? <TrendingUp className="w-3 h-3 ml-1 inline" /> : <TrendingDown className="w-3 h-3 ml-1 inline" />}
+        <Badge className={displayTrend === "up" ? "bg-green-100 text-green-700 dark:bg-green-900/20 dark:text-green-400" : displayTrend === "down" ? "bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400" : "bg-muted text-muted-foreground"}>
+          {displayChange}
+          {displayTrend === "up" && <TrendingUp className="w-3 h-3 ml-1 inline" />}
+          {displayTrend === "down" && <TrendingDown className="w-3 h-3 ml-1 inline" />}
         </Badge>
       </div>
       <p className="text-muted-foreground mb-1">{title}</p>
@@ -309,14 +286,7 @@ export function Analytics() {
         <Card className="p-6">
           <h3 className="text-foreground mb-6">Order Fulfillment Trends (24 Hours)</h3>
           <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={deliveryTrends.length > 0 ? deliveryTrends : [
-              { time: "00:00", completed: 12, inTransit: 8, pending: 5 },
-              { time: "04:00", completed: 8, inTransit: 5, pending: 3 },
-              { time: "08:00", completed: 45, inTransit: 25, pending: 15 },
-              { time: "12:00", completed: 78, inTransit: 42, pending: 28 },
-              { time: "16:00", completed: 95, inTransit: 38, pending: 22 },
-              { time: "20:00", completed: 62, inTransit: 28, pending: 18 },
-            ]}>
+            <AreaChart data={deliveryTrends}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="time" />
               <YAxis />
@@ -333,14 +303,7 @@ export function Analytics() {
         <Card className="p-6">
           <h3 className="text-foreground mb-6">Zone-Level Performance</h3>
           <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={zonePerformance.length > 0 ? zonePerformance : [
-              { zone: "Zone A3", demand: 145, drivers: 18, efficiency: 92 },
-              { zone: "Zone B1", demand: 132, drivers: 15, efficiency: 88 },
-              { zone: "Zone C2", demand: 128, drivers: 16, efficiency: 85 },
-              { zone: "Zone D5", demand: 98, drivers: 12, efficiency: 90 },
-              { zone: "Zone E2", demand: 115, drivers: 14, efficiency: 87 },
-              { zone: "Zone F9", demand: 88, drivers: 10, efficiency: 84 },
-            ]}>
+            <BarChart data={zonePerformance}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="zone" />
               <YAxis yAxisId="left" />
@@ -358,7 +321,7 @@ export function Analytics() {
         <Card className="p-6">
           <h3 className="text-foreground mb-4">Top Performing Drivers</h3>
           <div className="space-y-3">
-            {driverEfficiency.map((driver, index) => (<div key={driver.name} className="flex items-center justify-between p-4 bg-muted rounded-lg">
+            {driverEfficiency.length > 0 ? driverEfficiency.map((driver, index) => (<div key={driver.name} className="flex items-center justify-between p-4 bg-muted rounded-lg">
               <div className="flex items-center gap-4">
                 <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white">
                   {index + 1}
@@ -377,7 +340,9 @@ export function Analytics() {
                   <div className="h-full bg-green-600" style={{ width: `${driver.score}%` }} />
                 </div>
               </div>
-            </div>))}
+            </div>)) : (
+              <p className="text-muted-foreground">No driver data available for the last 30 days.</p>
+            )}
           </div>
         </Card>
       </TabsContent>
@@ -389,16 +354,14 @@ export function Analytics() {
           <StatCard
             title="Total Incidents"
             value={totalIncidents}
-            change={formatChange(-safetyTrendPct)}
             icon={AlertTriangle}
-            trend={safetyTrendPct >= 0 ? "up" : "down"}
+            trend="neutral"
           />
           <StatCard
             title="Active Alerts"
             value={activeAlertsCount}
-            change={activeAlertsCount <= 10 ? "-12%" : "+22%"}
             icon={Activity}
-            trend={activeAlertsCount <= 10 ? "up" : "down"}
+            trend={activeAlertsCount > 5 ? "down" : "neutral"}
           />
           <StatCard
             title="Fleet Safety Score"
@@ -410,25 +373,28 @@ export function Analytics() {
           <StatCard
             title="Accident Rate"
             value={`${accidentRate}%`}
-            change={accidentRate < 1 ? "-15%" : "+5%"}
             icon={Zap}
-            trend={accidentRate < 1 ? "up" : "down"}
+            trend="neutral"
           />
         </div>
 
         {/* Fatigue Trend - Dynamic from /analytics/alerts/summary */}
         <Card className="p-6">
           <h3 className="text-foreground mb-6">Safety Alert Trends (Last 7 Days)</h3>
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={fatigueData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="day" />
-              <YAxis />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="alerts" stroke="#ef4444" strokeWidth={3} name="Safety Alerts" />
-            </LineChart>
-          </ResponsiveContainer>
+          {fatigueData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={fatigueData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="day" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="alerts" stroke="#ef4444" strokeWidth={3} name="Safety Alerts" />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-muted-foreground text-center py-10">No alerts recorded in this period.</p>
+          )}
           {activeAlertsCount > 5 && (
             <div className="mt-4 p-4 bg-orange-500/10 dark:bg-orange-900/20 border border-orange-500/20 rounded-lg">
               <p className="text-orange-700 dark:text-orange-400">
@@ -442,27 +408,35 @@ export function Analytics() {
         <div className="grid grid-cols-2 gap-6">
           <Card className="p-6">
             <h3 className="text-foreground mb-6">Incident Distribution by Type</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie data={incidentTypes} cx="50%" cy="50%" labelLine={false} label={(entry) => `${entry.name} ${(entry.percent * 100).toFixed(0)}%`} outerRadius={100} fill="#8884d8" dataKey="value">
-                  {incidentTypes.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.color} />))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            {incidentTypes.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie data={incidentTypes} cx="50%" cy="50%" labelLine={false} label={(entry) => `${entry.name} ${(entry.percent * 100).toFixed(0)}%`} outerRadius={100} fill="#8884d8" dataKey="value">
+                    {incidentTypes.map((entry, index) => (<Cell key={`cell-${index}`} fill={entry.color} />))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-muted-foreground text-center py-10">No incident occurrences available for this period.</p>
+            )}
           </Card>
 
           <Card className="p-6">
             <h3 className="text-foreground mb-6">Incidents by Zone</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={incidentByZone}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="zone" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="incidents" fill="#ef4444" />
-              </BarChart>
-            </ResponsiveContainer>
+            {incidentByZone.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={incidentByZone}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="zone" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="incidents" fill="#ef4444" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-muted-foreground text-center py-10">No incidents triggered per zone in this period.</p>
+            )}
           </Card>
         </div>
 
@@ -478,7 +452,9 @@ export function Analytics() {
             <div className="p-4 bg-orange-500/10 dark:bg-orange-900/20 rounded-lg border border-orange-500/20">
               <p className="text-muted-foreground mb-2">Speeding Events</p>
               <p className="text-foreground text-2xl">{speedingEvents} events</p>
-              <p className="text-orange-600 dark:text-orange-400 mt-2">Peak at 6-8 PM</p>
+              <p className="text-orange-600 dark:text-orange-400 mt-2">
+                {safetyScoreData?.peak_speeding_hour || 'No active trend'}
+              </p>
             </div>
             <div className="p-4 bg-yellow-500/10 dark:bg-yellow-900/20 rounded-lg border border-yellow-500/20">
               <p className="text-muted-foreground mb-2">Fatigue Alerts</p>
@@ -702,112 +678,70 @@ export function Analytics() {
           </p>
         </Card>
 
-        {/* Risk Predictions - Hardcoded (Requires AI risk prediction model) */}
+        {/* Risk Predictions - Dynamic */}
         <div className="grid grid-cols-2 gap-6">
           <Card className="p-6">
-            <h3 className="text-foreground mb-4">High-Risk Zones (Next 4 Hours)</h3>
-            {/* TODO: Requires AI-based zone risk prediction model */}
+            <h3 className="text-foreground mb-4">High-Risk Zones</h3>
             <div className="space-y-3">
-              <div className="flex items-center justify-between p-3 bg-red-500/10 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <MapPin className="w-5 h-5 text-red-600 dark:text-red-400" />
-                  <div>
-                    <p className="text-foreground">Zone C2</p>
-                    <p className="text-muted-foreground">Traffic congestion</p>
+              {(predictiveRisks?.high_risk_zones || []).map((zone, idx) => (
+                <div key={zone.zone_id || idx} className={`flex items-center justify-between p-3 ${zone.risk_level === 'Critical' ? 'bg-red-500/10' : zone.risk_level === 'High' ? 'bg-orange-500/10' : zone.risk_level === 'Medium' ? 'bg-yellow-500/10' : 'bg-muted'} rounded-lg`}>
+                  <div className="flex items-center gap-3">
+                    <MapPin className={`w-5 h-5 ${zone.risk_level === 'Critical' ? 'text-red-600 dark:text-red-400' : zone.risk_level === 'High' ? 'text-orange-600 dark:text-orange-400' : zone.risk_level === 'Medium' ? 'text-yellow-600 dark:text-yellow-400' : 'text-muted-foreground'}`} />
+                    <div>
+                      <p className="text-foreground">{zone.zone_name || `Zone ${zone.zone_id}`}</p>
+                      <p className="text-muted-foreground">{zone.reason}</p>
+                    </div>
                   </div>
+                  <Badge className={zone.risk_level === 'Critical' ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400' : zone.risk_level === 'High' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400' : zone.risk_level === 'Medium' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400' : 'bg-muted text-muted-foreground'}>{zone.risk_level} Risk</Badge>
                 </div>
-                <Badge className="bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400">High Risk</Badge>
-              </div>
-              <div className="flex items-center justify-between p-3 bg-orange-500/10 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <MapPin className="w-5 h-5 text-orange-600 dark:text-orange-400" />
-                  <div>
-                    <p className="text-foreground">Zone B1</p>
-                    <p className="text-muted-foreground">High demand spike</p>
-                  </div>
-                </div>
-                <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400">Medium Risk</Badge>
-              </div>
-              <div className="flex items-center justify-between p-3 bg-yellow-500/10 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <MapPin className="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
-                  <div>
-                    <p className="text-foreground">Zone E2</p>
-                    <p className="text-muted-foreground">Weather conditions</p>
-                  </div>
-                </div>
-                <Badge className="bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400">Low Risk</Badge>
-              </div>
+              ))}
+              {(!predictiveRisks?.high_risk_zones || predictiveRisks.high_risk_zones.length === 0) && (
+                <p className="text-muted-foreground text-sm text-center py-4">No risk data available.</p>
+              )}
             </div>
           </Card>
 
           <Card className="p-6">
             <h3 className="text-foreground mb-4">Drivers at Risk of Fatigue</h3>
-            {/* TODO: Requires AI fatigue prediction based on driver telemetry */}
             <div className="space-y-3">
-              <div className="flex items-center justify-between p-3 bg-red-500/10 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Activity className="w-5 h-5 text-red-600 dark:text-red-400" />
-                  <div>
-                    <p className="text-foreground">Omar Hassan</p>
-                    <p className="text-muted-foreground">6.5 hrs continuous</p>
+              {(predictiveRisks?.drivers_at_risk || []).map((driver, idx) => (
+                <div key={driver.driver_id || idx} className={`flex items-center justify-between p-3 ${driver.risk_level === 'Critical' ? 'bg-red-500/10' : driver.risk_level === 'High' ? 'bg-orange-500/10' : driver.risk_level === 'Medium' ? 'bg-yellow-500/10' : 'bg-muted'} rounded-lg`}>
+                  <div className="flex items-center gap-3">
+                    <Activity className={`w-5 h-5 ${driver.risk_level === 'Critical' ? 'text-red-600 dark:text-red-400' : driver.risk_level === 'High' ? 'text-orange-600 dark:text-orange-400' : driver.risk_level === 'Medium' ? 'text-yellow-600 dark:text-yellow-400' : 'text-muted-foreground'}`} />
+                    <div>
+                      <p className="text-foreground">{driver.name}</p>
+                      <p className="text-muted-foreground">{driver.continuous_hours} hrs continuous</p>
+                    </div>
                   </div>
+                  <Badge className={driver.risk_level === 'Critical' ? 'bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400' : driver.risk_level === 'High' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400' : driver.risk_level === 'Medium' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400' : 'bg-muted text-muted-foreground'}>{driver.risk_level}</Badge>
                 </div>
-                <Badge className="bg-red-100 text-red-700 dark:bg-red-900/20 dark:text-red-400">Critical</Badge>
-              </div>
-              <div className="flex items-center justify-between p-3 bg-orange-500/10 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Activity className="w-5 h-5 text-orange-600 dark:text-orange-400" />
-                  <div>
-                    <p className="text-foreground">Ahmed Khan</p>
-                    <p className="text-muted-foreground">5.2 hrs continuous</p>
-                  </div>
-                </div>
-                <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/20 dark:text-orange-400">High</Badge>
-              </div>
-              <div className="flex items-center justify-between p-3 bg-yellow-500/10 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Activity className="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
-                  <div>
-                    <p className="text-foreground">Raj Patel</p>
-                    <p className="text-muted-foreground">4.1 hrs continuous</p>
-                  </div>
-                </div>
-                <Badge className="bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400">Medium</Badge>
-              </div>
+              ))}
+              {(!predictiveRisks?.drivers_at_risk || predictiveRisks.drivers_at_risk.length === 0) && (
+                <p className="text-muted-foreground text-sm text-center py-4">No high-risk drivers currently tracked.</p>
+              )}
             </div>
           </Card>
         </div>
 
-        {/* Weather-Based Predictions - Hardcoded (Requires weather API integration) */}
+        {/* Weather-Based Predictions - Dynamic */}
         <Card className="p-6">
           <h3 className="text-foreground mb-4">Weather-Based Demand Impact</h3>
-          {/* TODO: Requires weather API integration and ML demand correlation model */}
           <div className="grid grid-cols-3 gap-4">
-            <div className="p-4 bg-blue-500/10 rounded-lg border border-blue-500/20">
-              <div className="flex items-center gap-3 mb-3">
-                <CloudRain className="w-6 h-6 text-blue-600 dark:text-blue-400" />
-                <p className="text-foreground">Rain Expected</p>
+            {(predictiveRisks?.weather_impacts || []).map((weather, idx) => (
+              <div key={idx} className={`p-4 rounded-lg border flex flex-col justify-between ${weather.icon_type === 'rain' ? 'bg-blue-500/10 border-blue-500/20' : weather.icon_type === 'temperature' ? 'bg-orange-500/10 border-orange-500/20' : 'bg-green-500/10 border-green-500/20'}`}>
+                <div>
+                  <div className="flex items-center gap-3 mb-3">
+                    {weather.icon_type === 'rain' ? <CloudRain className="w-6 h-6 text-blue-600 dark:text-blue-400" /> : weather.icon_type === 'temperature' ? <Activity className="w-6 h-6 text-orange-600 dark:text-orange-400" /> : <Target className="w-6 h-6 text-green-600 dark:text-green-400" />}
+                    <p className="text-foreground font-medium">{weather.condition}</p>
+                  </div>
+                  <p className="text-muted-foreground mb-2 text-sm">{weather.timeframe}</p>
+                </div>
+                <p className={`font-medium ${weather.icon_type === 'rain' ? 'text-blue-700 dark:text-blue-400' : weather.icon_type === 'temperature' ? 'text-orange-700 dark:text-orange-400' : 'text-green-700 dark:text-green-400'}`}>{weather.impact_text}</p>
               </div>
-              <p className="text-muted-foreground mb-2">Tomorrow 2-4 PM</p>
-              <p className="text-blue-700 dark:text-blue-400">+28% demand increase predicted</p>
-            </div>
-            <div className="p-4 bg-orange-500/10 rounded-lg border border-orange-500/20">
-              <div className="flex items-center gap-3 mb-3">
-                <Activity className="w-6 h-6 text-orange-600 dark:text-orange-400" />
-                <p className="text-foreground">High Temperature</p>
-              </div>
-              <p className="text-muted-foreground mb-2">Today 12-3 PM (43°C)</p>
-              <p className="text-orange-700 dark:text-orange-400">Fatigue risk elevated 45%</p>
-            </div>
-            <div className="p-4 bg-green-500/10 rounded-lg border border-green-500/20">
-              <div className="flex items-center gap-3 mb-3">
-                <Target className="w-6 h-6 text-green-600 dark:text-green-400" />
-                <p className="text-foreground">Optimal Conditions</p>
-              </div>
-              <p className="text-muted-foreground mb-2">Evening 6-9 PM</p>
-              <p className="text-green-700 dark:text-green-400">Peak performance window</p>
-            </div>
+            ))}
+            {(!predictiveRisks?.weather_impacts || predictiveRisks.weather_impacts.length === 0) && (
+              <p className="text-muted-foreground text-sm col-span-3 text-center py-4">Loading live weather telemetry...</p>
+            )}
           </div>
         </Card>
       </TabsContent>

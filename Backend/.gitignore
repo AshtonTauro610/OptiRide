@@ -11,3 +11,4 @@ htmlcov/
 
 scripts/
 ml/models/
+ml/face_landmarker.task
