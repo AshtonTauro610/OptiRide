@@ -18,6 +18,7 @@ from geoalchemy2.elements import WKTElement
 from app.models.sensor_record import SensorRecord
 from app.models.alert import Alert
 from app.models.driver import Driver
+from app.models.order import Order
 from app.services.order_service import OrderService
 from app.services.driver_service import DriverService
 from app.schemas.driver import DriverStatus
@@ -27,6 +28,7 @@ from app.schemas.sensor import (
     AccelerometerData, GyroscopeData
 )
 from app.schemas.alert import AlertCreate, AlertType, AlertSeverity
+from app.services.genai_service import GenAIService
 from app.core.kafka import kafka_producer
 from app.core.socket_manager import socket_manager, emit_sync
 
@@ -262,15 +264,29 @@ class SafetyMonitoringService:
         )
         results["alerts"] = alerts
 
-        # Update driver's live fatigue score in DB
+        # 1. Update driver's live fatigue score in DB
         driver = self.db.query(Driver).filter(Driver.driver_id == batch.driver_id).first()
         if driver and fatigue_analysis:
-            driver.fatigue_score = fatigue_analysis.score
+            driver.fatigue_score = fatigue_analysis.fatigue_score
             self.db.commit()
 
-        # Enforce automated break actions on critical fatigue
+        # 2. Enforce automated break actions on critical fatigue
         if fatigue_analysis.alert_level == "critical":
             self.enforce_fatigue_break(batch.driver_id, batch.location_data)
+
+        # 3. Integrate GenAI Safety Insights
+        safety_data = {
+            "driver_id": batch.driver_id,
+            "fatigue_score": fatigue_analysis.fatigue_score,
+            "fatigue_alert_level": fatigue_analysis.alert_level,
+            "harsh_braking": movement_analysis.harsh_braking,
+            "harsh_acceleration": movement_analysis.harsh_acceleration,
+            "sharp_turn": movement_analysis.sharp_turn,
+            "sudden_impact": movement_analysis.sudden_impact,
+            "movement_risk_level": movement_analysis.risk_level,
+            "speed": batch.location_data.speed if batch.location_data else 0,
+        }
+        results["genai_insights"] = GenAIService.generate_safety_insights(safety_data)
 
         return results
 
@@ -596,7 +612,7 @@ class SafetyMonitoringService:
                 asyncio.create_task(self._emergency_countdown(driver_id, location_data.latitude, location_data.longitude))
     
         return alerts
-    
+
     async def _emergency_countdown(self, driver_id : str, lat: float, lng: float):
         logger.info(f"Starting 60s emergency countdown for driver {driver_id}")
 
@@ -650,3 +666,5 @@ class SafetyMonitoringService:
             
             self.execute_sos_protocol(driver_id, lat, lng)
             return { "message" : "SOS protocol engaged immediately."}
+    
+    
