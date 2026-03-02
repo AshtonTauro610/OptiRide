@@ -9,7 +9,7 @@ export function calculateDriverEarnings(order) {
   if (order.delivery_fee) {
     return order.delivery_fee;
   }
-  
+
   const distance = order.estimated_distance_km || order.actual_distance_km || 0;
   return DRIVER_BASE_FEE + (distance * DRIVER_PER_KM_RATE);
 }
@@ -60,6 +60,7 @@ export function mapApiOrderToOrder(order) {
     pickupLongitude: order.pickup_longitude,
     dropoffLatitude: order.dropoff_latitude,
     dropoffLongitude: order.dropoff_longitude,
+    optimized_sequence: order.optimized_sequence,
     raw: order,
   };
 }

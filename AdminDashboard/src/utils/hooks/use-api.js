@@ -27,9 +27,6 @@ export const useReallocateDriver = () => {
     return { reallocate, loading, error };
 };
 
-/**
- * Hook for fetching current allocation status and zone metrics
- */
 export const useAllocationStatus = () => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -55,9 +52,6 @@ export const useAllocationStatus = () => {
     return { data, loading, error, refetch: fetchStatus };
 };
 
-/**
- * Hook for manual driver allocation to a specific zone
- */
 export const useManualAllocate = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -79,9 +73,6 @@ export const useManualAllocate = () => {
     return { manualAllocate, loading, error };
 };
 
-/**
- * Hook for triggering initial fleet-wide allocation
- */
 export const useInitialAllocation = () => {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -102,7 +93,7 @@ export const useInitialAllocation = () => {
 
     return { initialAllocation, loading, error };
 };
-// Driver hooks
+
 export const useDrivers = (skip = 0, limit = 10) => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -226,7 +217,7 @@ export const useDriverPerformanceStats = (driverId) => {
     }, [fetchStats]);
     return { data, loading, error, refetch: fetchStats };
 };
-// Order hooks
+
 export const useOrders = (status, driverId, pickupZone) => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -435,7 +426,6 @@ export const useZoneHeatMap = (hour) => {
     return { data, loading, error, refetch: fetchHeatMap };
 };
 
-// Performance Analysis hook
 export const usePerformanceAnalysis = (entityType, entityId, period = 'this_month') => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -464,7 +454,6 @@ export const usePerformanceAnalysis = (entityType, entityId, period = 'this_mont
     return { data, loading, error, refetch: fetchPerformance };
 };
 
-// Driver Analytics Summary hook
 export const useDriverAnalyticsSummary = (driverId, period = 'this_month') => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -493,7 +482,6 @@ export const useDriverAnalyticsSummary = (driverId, period = 'this_month') => {
     return { data, loading, error, refetch: fetchSummary };
 };
 
-// Zone Analytics Summary hook
 export const useZoneAnalyticsSummary = (zoneId, period = 'this_month') => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -522,7 +510,6 @@ export const useZoneAnalyticsSummary = (zoneId, period = 'this_month') => {
     return { data, loading, error, refetch: fetchSummary };
 };
 
-// Generate Report hook (mutation-style hook)
 export const useGenerateReport = () => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
@@ -548,14 +535,6 @@ export const useGenerateReport = () => {
     return { data, loading, error, generateReport };
 };
 
-// ============================================
-// NEW AGGREGATED ANALYTICS HOOKS
-// ============================================
-
-/**
- * Hook for fetching aggregated alerts summary
- * @param {string} period - 'today', 'last_7_days', 'this_month'
- */
 export const useAlertsSummary = (period = 'last_7_days') => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -581,10 +560,6 @@ export const useAlertsSummary = (period = 'last_7_days') => {
     return { data, loading, error, refetch: fetchAlertsSummary };
 };
 
-/**
- * Hook for fetching fleet-wide safety score
- * @param {string} period - 'today', 'last_7_days', 'this_month'
- */
 export const useSafetyScore = (period = 'last_7_days') => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -610,11 +585,6 @@ export const useSafetyScore = (period = 'last_7_days') => {
     return { data, loading, error, refetch: fetchSafetyScore };
 };
 
-/**
- * Hook for fetching top performing drivers
- * @param {string} period - 'today', 'last_7_days', 'this_month'
- * @param {number} limit - Number of top performers (1-20)
- */
 export const useTopPerformers = (period = 'last_7_days', limit = 5) => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -640,10 +610,6 @@ export const useTopPerformers = (period = 'last_7_days', limit = 5) => {
     return { data, loading, error, refetch: fetchTopPerformers };
 };
 
-/**
- * Hook for fetching demand forecast
- * @param {number} hours - Number of hours to forecast (1-24)
- */
 export const useDemandForecast = (hours = 12) => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -669,10 +635,6 @@ export const useDemandForecast = (hours = 12) => {
     return { data, loading, error, refetch: fetchDemandForecast };
 };
 
-/**
- * Hook for fetching demand history for a specific date
- * @param {string|null} date - YYYY-MM-DD format, null for today
- */
 export const useDemandHistory = (date = null) => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -698,10 +660,7 @@ export const useDemandHistory = (date = null) => {
     return { data, loading, error, refetch: fetchDemandHistory };
 };
 
-/**
- * Hook for fetching zone-wise demand history for a specific date
- * @param {string|null} date - YYYY-MM-DD format, null for today
- */
+
 export const useZoneDemandHistory = (date = null) => {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -727,10 +686,34 @@ export const useZoneDemandHistory = (date = null) => {
     return { data, loading, error, refetch: fetchZoneDemandHistory };
 };
 
-// Custom hook for periodic data refresh
 export const usePolling = (callback, interval = 5000) => {
     useEffect(() => {
         const id = setInterval(callback, interval);
         return () => clearInterval(id);
     }, [callback, interval]);
+};
+
+export const usePredictiveRisks = () => {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    const fetchRisks = useCallback(async () => {
+        try {
+            setLoading(true);
+            const result = await analyticsService.getPredictiveRisks();
+            setData(result);
+            setError(null);
+        } catch (err) {
+            setError(err);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        fetchRisks();
+    }, [fetchRisks]);
+
+    return { data, loading, error, refetch: fetchRisks };
 };

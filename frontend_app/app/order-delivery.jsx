@@ -1,10 +1,12 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Platform, ActivityIndicator } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ArrowLeftIcon, CheckCircle } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
 import { useSensors } from '@/contexts/SensorContext';
 import { useOrders } from '@/contexts/OrdersContext';
+import polyline from "@mapbox/polyline";
+import * as Location from 'expo-location';
 
 // Conditionally import MapView for native platforms
 let MapView, Polyline, Marker, PROVIDER_GOOGLE;
@@ -28,6 +30,26 @@ export default function OrderDeliveryScreen() {
     () => orders.find((o) => o.id === orderId),
     [orders, orderId],
   );
+
+  // Track driver's current location
+  const [driverLocation, setDriverLocation] = useState(null);
+
+  useEffect(() => {
+    let sub;
+    const startTracking = async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status === 'granted') {
+          sub = await Location.watchPositionAsync(
+            { accuracy: Location.Accuracy.High, distanceInterval: 20 },
+            (loc) => setDriverLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude })
+          );
+        }
+      } catch (e) { console.warn('Location tracking error:', e); }
+    };
+    startTracking();
+    return () => sub?.remove();
+  }, []);
 
   const handleCompleteDelivery = async () => {
     if (!order) return;
@@ -68,16 +90,25 @@ export default function OrderDeliveryScreen() {
     );
   }
 
-  const routeCoordinates = [
-    {
-      latitude: order.pickupLatitude || 25.1970,
-      longitude: order.pickupLongitude || 55.2780
-    },
-    {
-      latitude: order.dropoffLatitude || 25.1850,
-      longitude: order.dropoffLongitude || 55.2650
-    },
-  ];
+  const routeCoordinates = useMemo(() => {
+    if (order?.route_polyline) {
+      const decodedPoints = polyline.decode(order.route_polyline);
+      return decodedPoints.map((point) => ({
+        latitude: point[0],
+        longitude: point[1],
+      }));
+    }
+    return [
+      {
+        latitude: order?.pickupLatitude || 25.1970,
+        longitude: order?.pickupLongitude || 55.2780
+      },
+      {
+        latitude: order?.dropoffLatitude || 25.1850,
+        longitude: order?.dropoffLongitude || 55.2650
+      }
+    ];
+  }, [order]);
 
   // Map region centered on dropoff
   const initialRegion = {
@@ -129,19 +160,29 @@ export default function OrderDeliveryScreen() {
         provider={PROVIDER_GOOGLE}
         style={styles.map}
         initialRegion={initialRegion}
+        showsUserLocation={true}
+        showsMyLocationButton={true}
       >
         <Polyline
           coordinates={routeCoordinates}
           strokeColor={theme.colors.success}
           strokeWidth={4}
         />
+        {/* Driver location marker */}
+        {driverLocation && (
+          <Marker
+            coordinate={driverLocation}
+            title="Your Location"
+            pinColor="#3B82F6"
+          />
+        )}
         <Marker
           coordinate={routeCoordinates[0]}
           title={order.restaurant}
           pinColor={theme.colors.accent}
         />
         <Marker
-          coordinate={routeCoordinates[1]}
+          coordinate={routeCoordinates[routeCoordinates.length - 1]}
           title="Customer Location"
           pinColor={theme.colors.success}
         />

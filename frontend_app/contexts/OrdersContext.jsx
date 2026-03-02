@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { fetchDriverOrders, submitDelivery, submitPickup } from "@/services/orders";
 import { mapApiOrderToOrder } from "@/types/order";
+import * as Location from 'expo-location';
 
 const ORDER_QUERY_KEY = ["orders"];
 
@@ -33,27 +34,43 @@ export const [OrdersProvider, useOrders] = createContextHook(() => {
   const confirmPickup = useCallback(
     async (orderId) => {
       if (!token) throw new Error("Not authenticated");
-      const order = orders.find((item) => item.id === orderId);
+      // Get driver's actual GPS location for proximity verification
+      let lat = 0, lng = 0;
+      try {
+        const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        lat = location.coords.latitude;
+        lng = location.coords.longitude;
+      } catch (e) {
+        console.warn('Could not get GPS for pickup verification:', e);
+      }
       await submitPickup(token, orderId, {
-        pickup_latitude: order?.pickupLatitude ?? 0,
-        pickup_longitude: order?.pickupLongitude ?? 0,
+        pickup_latitude: lat,
+        pickup_longitude: lng,
       });
       await invalidateOrders();
     },
-    [invalidateOrders, orders, token],
+    [invalidateOrders, token],
   );
 
   const completeDelivery = useCallback(
     async (orderId) => {
       if (!token) throw new Error("Not authenticated");
-      const order = orders.find((item) => item.id === orderId);
+      // Get driver's actual GPS location for proximity verification
+      let lat = 0, lng = 0;
+      try {
+        const location = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        lat = location.coords.latitude;
+        lng = location.coords.longitude;
+      } catch (e) {
+        console.warn('Could not get GPS for delivery verification:', e);
+      }
       await submitDelivery(token, orderId, {
-        dropoff_latitude: order?.dropoffLatitude ?? 0,
-        dropoff_longitude: order?.dropoffLongitude ?? 0,
+        dropoff_latitude: lat,
+        dropoff_longitude: lng,
       });
       await invalidateOrders();
     },
-    [invalidateOrders, orders, token],
+    [invalidateOrders, token],
   );
 
   return {

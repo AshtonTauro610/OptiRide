@@ -89,9 +89,18 @@ def create_firebase_user(email: str, password: str, phone_number: Optional[str] 
             detail="Phone number already exists",
         )
     except Exception as e:
+        error_msg = str(e)
+        if "INVALID_PHONE_NUMBER" in error_msg:
+            if "TOO_SHORT" in error_msg:
+                error_msg = "Phone number is too short"
+            else:
+                error_msg = "Invalid phone number format"
+        elif "EMAIL_EXISTS" in error_msg:
+            error_msg = "Email already exists"
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error creating user in Firebase",
+            detail=error_msg,
         )
 
 def delete_firebase_user(uid: str):

@@ -2,12 +2,17 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { useOrders } from "@/contexts/OrdersContext";
 import { useSensors } from "@/contexts/SensorContext";
 import { useRouter } from "expo-router";
-import { Bell, User, Navigation, Gauge, RotateCw } from "lucide-react-native";
-import React, { useState, useEffect, useMemo } from "react";
-import { StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Platform } from "react-native";
+import { Bell, User, Navigation, Gauge, RotateCw, ChevronDown, ChevronUp, MapPin, CheckCircle2 } from "lucide-react-native";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { StyleSheet, Text, TouchableOpacity, View, ActivityIndicator, Platform, ScrollView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Location from "expo-location";
-import { fetchDeliveryRoute } from "@/services/route";
+import { fetchDeliveryRoute, fetchRouteDirections, fetchMultiOrderRoute } from "@/services/route";
+import polyline from "@mapbox/polyline";
+// create socket service
+import socket from "@/services/socket";
+import { useAllocationNotification } from "@/contexts/AllocationNotificationContext";
+
 
 // Only import react-native-maps on native platforms
 let MapView, Marker, Polyline, PROVIDER_DEFAULT, PROVIDER_GOOGLE;
@@ -33,20 +38,34 @@ export default function MapScreen() {
   const router = useRouter();
   const { orders } = useOrders();
   const { currentSpeed, gyroscopeData, isMonitoring, locationData, startMonitoring } = useSensors();
+  const { navigationTarget, clearNavigationTarget } = useAllocationNotification();
 
   const [userLocation, setUserLocation] = useState(null);
+  const [zoneRouteData, setZoneRouteData] = useState(null);
   const [isLoadingLocation, setIsLoadingLocation] = useState(true);
   const [locationError, setLocationError] = useState(null);
   const [routeData, setRouteData] = useState(null);
   const [isLoadingRoute, setIsLoadingRoute] = useState(false);
   const [isStartingSensors, setIsStartingSensors] = useState(false);
+  const [optimizedRouteCoords, setOptimizedRouteCoords] = useState([]);
+  const [isTimelineExpanded, setIsTimelineExpanded] = useState(false);
+
+  const mapRef = useRef(null);
+
+  // Refs for tracking active ID to prevent infinite refetching
+  const lastActiveOrderIdRef = useRef(null);
+  const lastNavTargetIdRef = useRef(null);
 
   const bgColor = isDarkMode ? "#111827" : "#F9FAFB";
 
-  // Get active order (assigned or picked_up)
-  const activeOrder = useMemo(() => {
-    return orders.find(o => o.status === "assigned");
+  // Get active orders (assigned or picked_up)
+  const activeOrders = useMemo(() => {
+    return orders.filter(o => o.status === "assigned" || o.status === "picked_up");
   }, [orders]);
+
+  const activeOrder = activeOrders[0];
+
+  const isPickedUp = activeOrders.length > 0 && activeOrders.every(o => o.pickupConfirmed);
 
   // Handle starting sensors manually
   const handleStartSensors = async () => {
@@ -70,8 +89,8 @@ export default function MapScreen() {
   const gyroMagnitude = useMemo(() => {
     if (!gyroscopeData) return 0;
     return Math.sqrt(
-      gyroscopeData.x ** 2 + 
-      gyroscopeData.y ** 2 + 
+      gyroscopeData.x ** 2 +
+      gyroscopeData.y ** 2 +
       gyroscopeData.z ** 2
     ).toFixed(2);
   }, [gyroscopeData]);
@@ -80,40 +99,143 @@ export default function MapScreen() {
     getUserLocation();
   }, []);
 
-  // Fetch route when we have location and active order
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleDriverAssigned = (data) => {
+      console.log("Driver assigned:", data);
+      if (data.polyline) {
+        const decodedPoints = polyline.decode(data.polyline);
+        const coords = decodedPoints.map(point => ({
+          latitude: point[0],
+          longitude: point[1],
+        }));
+        setOptimizedRouteCoords(coords);
+      }
+    };
+
+    socket.on("driver_assigned", handleDriverAssigned)
+
+    return () => {
+      socket.off("driver_assigned", handleDriverAssigned)
+    };
+  }, []);
+
+  // Fetch route when we have location and active orders
   useEffect(() => {
     const fetchRoute = async () => {
-      if (!userLocation || !activeOrder) {
+      if (!userLocation || activeOrders.length === 0) {
         setRouteData(null);
         return;
       }
 
-      const pickupLocation = {
-        latitude: activeOrder.pickupLatitude || 25.2048,
-        longitude: activeOrder.pickupLongitude || 55.2708,
-      };
+      // Only fetch ONCE when the order state changes to save API costs
+      // Cache buster now includes the optimized sequence so dynamically re-patched arrays force a map redraw
+      const orderStateId = activeOrders.map(o => `${o.id}_${o.status}_${JSON.stringify(o.optimized_sequence || [])}`).sort().join('|');
+      const isNewOrderState = lastActiveOrderIdRef.current !== orderStateId;
 
-      const dropoffLocation = {
-        latitude: activeOrder.dropoffLatitude || 25.197,
-        longitude: activeOrder.dropoffLongitude || 55.278,
-      };
+      if (!isNewOrderState && routeData) {
+        // Already fetched for this exact permutation state, do not refetch and hit rate limits
+        return;
+      }
+
+      lastActiveOrderIdRef.current = orderStateId;
 
       setIsLoadingRoute(true);
       try {
-        const route = await fetchDeliveryRoute(
+        const route = await fetchMultiOrderRoute(
           { latitude: userLocation.latitude, longitude: userLocation.longitude },
-          pickupLocation,
-          dropoffLocation
+          activeOrders
         );
+        console.log('[Map] Route data:', JSON.stringify({
+          toPickup: { coords: route?.toPickup?.coordinates?.length, dist: route?.toPickup?.distance },
+          toDropoff: { coords: route?.toDropoff?.coordinates?.length, dist: route?.toDropoff?.distance },
+          isMultiStop: route?.isMultiStop
+        }));
         setRouteData(route);
       } catch (error) {
         console.error('Error fetching route:', error);
+        setRouteData(null);
       }
       setIsLoadingRoute(false);
     };
 
     fetchRoute();
-  }, [userLocation, activeOrder]);
+  }, [userLocation, activeOrders]);
+
+  // Fetch zone route when navigationTarget exists
+  useEffect(() => {
+    const fetchZoneRoute = async () => {
+      if (!userLocation || !navigationTarget || activeOrder) {
+        setZoneRouteData(null);
+        return;
+      }
+
+      // Only fetch ONCE when the target zone changes to save API costs
+      const isNewTarget = lastNavTargetIdRef.current !== navigationTarget.zoneId;
+
+      if (!isNewTarget && zoneRouteData) {
+        // Already fetched for this zone, do not refetch
+        return;
+      }
+
+      lastNavTargetIdRef.current = navigationTarget.zoneId;
+
+      setIsLoadingRoute(true);
+      try {
+        const dest = {
+          latitude: navigationTarget.latitude,
+          longitude: navigationTarget.longitude,
+        };
+        const result = await fetchRouteDirections(
+          { latitude: userLocation.latitude, longitude: userLocation.longitude },
+          dest
+        );
+        if (result) {
+          setZoneRouteData(result);
+        }
+      } catch (error) {
+        console.error('Error fetching zone route:', error);
+      } finally {
+        setIsLoadingRoute(false);
+      }
+    };
+    fetchZoneRoute();
+  }, [userLocation, navigationTarget, activeOrder]);
+
+  // Haversine distance calculation in km
+  const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * (Math.PI / 180);
+    const dLon = (lon2 - lon1) * (Math.PI / 180);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2)
+      ;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const d = R * c; // Distance in km
+    return d;
+  };
+
+  const handleArrivalCheck = () => {
+    if (!userLocation || !navigationTarget) return;
+
+    const distance = getDistanceFromLatLonInKm(
+      userLocation.latitude,
+      userLocation.longitude,
+      navigationTarget.latitude,
+      navigationTarget.longitude
+    );
+
+    // If within 2.0 kilometers of the zone centroid
+    if (distance <= 2.0) {
+      alert("Successfully arrived at " + navigationTarget.zoneName + "!");
+      clearNavigationTarget();
+    } else {
+      alert(`You are not there yet. Please get closer to the zone before marking as arrived.`);
+    }
+  };
 
   const getUserLocation = async () => {
     try {
@@ -146,9 +268,33 @@ export default function MapScreen() {
     }
   };
 
-  // Get route coordinates
-  const toPickupCoords = routeData?.toPickup?.coordinates || [];
-  const toDropoffCoords = routeData?.toDropoff?.coordinates || [];
+  // Real-time hook: silently update driver icon without overriding map bounds
+  // We sync `userLocation` state with the background `locationData`
+  useEffect(() => {
+    if (locationData && locationData.latitude && locationData.longitude) {
+      setUserLocation(prev => ({
+        ...(prev || DEFAULT_LOCATION),
+        latitude: locationData.latitude,
+        longitude: locationData.longitude,
+      }));
+    }
+  }, [locationData]);
+
+  // Full route: unified line for multi-stop and single-stop
+  const fullRouteCoords = routeData?.fullRoute?.coordinates || [];
+
+  // Auto-fit map to show entire route when data loads
+  useEffect(() => {
+    if (!mapRef.current || fullRouteCoords.length === 0) return;
+    // Use a slight delay to let the map render first
+    const timer = setTimeout(() => {
+      mapRef.current?.fitToCoordinates(fullRouteCoords, {
+        edgePadding: { top: 120, right: 60, bottom: 60, left: 60 },
+        animated: true,
+      });
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [routeData]);
 
   // Web fallback
   if (Platform.OS === 'web') {
@@ -213,8 +359,8 @@ export default function MapScreen() {
 
       {/* Map container with overlays */}
       <View style={styles.mapContainer}>
-        {/* Sensor readings overlay - show when monitoring OR when there's an active order */}
-        {(isMonitoring || activeOrder) && (
+        {/* Sensor readings overlay - show when monitoring, active order, or navigating to zone */}
+        {(isMonitoring || activeOrder || navigationTarget) && (
           <View style={styles.sensorOverlay}>
             <View style={styles.sensorCard}>
               <Gauge size={20} color="#3B82F6" />
@@ -227,7 +373,7 @@ export default function MapScreen() {
               <Text style={styles.sensorUnit}>rad/s</Text>
             </View>
             {!isMonitoring && (
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.sensorCard, { backgroundColor: '#FEF3C7' }]}
                 onPress={handleStartSensors}
                 disabled={isStartingSensors}
@@ -242,36 +388,162 @@ export default function MapScreen() {
           </View>
         )}
 
-        {/* Active order info card */}
-        {activeOrder && (
+        {/* Zone Navigation Info Card */}
+        {!activeOrder && navigationTarget && (
           <View style={styles.orderInfoCard}>
             <View style={styles.orderInfoRow}>
-              <Navigation size={16} color="#10B981" />
+              <Navigation size={16} color="#8B5CF6" />
               <Text style={styles.orderInfoText} numberOfLines={1}>
-                {activeOrder.pickupConfirmed ? 'To: ' + activeOrder.details?.customerName : 'Pickup: ' + activeOrder.restaurant}
+                Navigating to: {navigationTarget.zoneName}
               </Text>
             </View>
-            {routeData && (
+            {zoneRouteData && (
               <View style={styles.routeStats}>
                 <Text style={styles.routeStatText}>
-                  {activeOrder.pickupConfirmed 
-                    ? `${routeData.toDropoff?.distance?.toFixed(1) || '~'} km • ${Math.round(routeData.toDropoff?.duration || 0)} min`
-                    : `${routeData.toPickup?.distance?.toFixed(1) || '~'} km • ${Math.round(routeData.toPickup?.duration || 0)} min`
-                  }
+                  {zoneRouteData.distance?.toFixed(1) || '~'} km • {Math.round(zoneRouteData.duration || 0)} min
+                </Text>
+                <Text style={[styles.routeStatText, { color: '#8B5CF6', fontWeight: '700' }]}>
+                  ETA: {(() => {
+                    const mins = Math.round(zoneRouteData.duration || 0);
+                    const arrival = new Date(Date.now() + mins * 60000);
+                    return arrival.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+                  })()}
                 </Text>
               </View>
             )}
-            <View style={styles.legendRow}>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendLine, { backgroundColor: '#3B82F6' }]} />
-                <Text style={styles.legendText}>To Pickup</Text>
-              </View>
-              <View style={styles.legendItem}>
-                <View style={[styles.legendLine, { backgroundColor: '#F97316' }]} />
-                <Text style={styles.legendText}>To Dropoff</Text>
-              </View>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#10B981', paddingVertical: 10, borderRadius: 8 }}
+                onPress={handleArrivalCheck}
+              >
+                <Text style={{ color: 'white', fontWeight: '600', textAlign: 'center' }}>I have Arrived</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#EF4444', paddingVertical: 10, borderRadius: 8 }}
+                onPress={clearNavigationTarget}
+              >
+                <Text style={{ color: 'white', fontWeight: '600', textAlign: 'center' }}>Dismiss</Text>
+              </TouchableOpacity>
             </View>
           </View>
+        )}
+
+        {/* Active order info card */}
+        {activeOrders.length > 0 && (
+          <TouchableOpacity
+            style={styles.orderInfoCard}
+            onPress={() => routeData?.isMultiStop && setIsTimelineExpanded(!isTimelineExpanded)}
+            activeOpacity={routeData?.isMultiStop ? 0.7 : 1}
+          >
+            <View style={styles.orderInfoRow}>
+              <Navigation size={16} color="#10B981" />
+              <Text style={styles.orderInfoText} numberOfLines={1}>
+                {routeData?.isMultiStop ? `Multi-Stop Route (${activeOrders.length} orders)` : (
+                  activeOrder.pickupConfirmed ? 'To: ' + activeOrder.details?.customerName : 'Pickup: ' + activeOrder.restaurant
+                )}
+              </Text>
+              {routeData?.isMultiStop && (
+                isTimelineExpanded ? <ChevronUp size={20} color="#6B7280" style={{ marginLeft: 'auto' }} /> : <ChevronDown size={20} color="#6B7280" style={{ marginLeft: 'auto' }} />
+              )}
+            </View>
+
+            {routeData && !isTimelineExpanded && (
+              <View style={styles.routeStats}>
+                {routeData.isMultiStop ? (
+                  <>
+                    <Text style={styles.routeStatText}>
+                      {routeData.sequence?.length > 0
+                        ? `Next Stop (${routeData.sequence[0].stopIndex}): ${routeData.sequence[0].metadata.type === 'pickup' ? 'Pickup at' : 'Dropoff'} ${routeData.sequence[0].metadata.title}`
+                        : 'Next Stop: Calculating...'}
+                    </Text>
+                    <Text style={[styles.routeStatText, { color: '#3B82F6', fontWeight: '700' }]}>
+                      Total Trip: {routeData.totalDistance?.toFixed(1) || '~'} km • {Math.round(routeData.totalDuration || 0)} min
+                    </Text>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.routeStatText}>
+                      {isPickedUp
+                        ? `${routeData.toDropoff?.distance?.toFixed(1) || '~'} km • ${Math.round(routeData.toDropoff?.duration || 0)} min to dropoff`
+                        : `${routeData.toPickup?.distance?.toFixed(1) || '~'} km • ${Math.round(routeData.toPickup?.duration || 0)} min to pickup`
+                      }
+                    </Text>
+                    <Text style={[styles.routeStatText, { color: '#3B82F6', fontWeight: '700' }]}>
+                      ETA: {(() => {
+                        const mins = isPickedUp
+                          ? Math.round(routeData.toDropoff?.duration || 0)
+                          : Math.round(routeData.toPickup?.duration || 0);
+                        const arrival = new Date(Date.now() + mins * 60000);
+                        return arrival.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+                      })()}
+                    </Text>
+                    {!isPickedUp && routeData.toDropoff && (
+                      <Text style={[styles.routeStatText, { marginTop: 2 }]}>
+                        Total: {((routeData.toPickup?.distance || 0) + (routeData.toDropoff?.distance || 0)).toFixed(1)} km • {Math.round((routeData.toPickup?.duration || 0) + (routeData.toDropoff?.duration || 0))} min
+                      </Text>
+                    )}
+                  </>
+                )}
+              </View>
+            )}
+
+            {!isTimelineExpanded && (
+              <View style={styles.legendRow}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendLine, { backgroundColor: '#3B82F6' }]} />
+                  <Text style={styles.legendText}>Route</Text>
+                </View>
+                {(!isPickedUp || routeData?.isMultiStop) && (
+                  <View style={styles.legendItem}>
+                    <View style={[styles.legendLine, { backgroundColor: '#10B981', width: 10, height: 10, borderRadius: 5 }]} />
+                    <Text style={styles.legendText}>Pickups</Text>
+                  </View>
+                )}
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendLine, { backgroundColor: '#EF4444', width: 10, height: 10, borderRadius: 5 }]} />
+                  <Text style={styles.legendText}>Dropoffs</Text>
+                </View>
+              </View>
+            )}
+
+            {/* Timeline Expansion */}
+            {isTimelineExpanded && routeData?.sequence && (
+              <View style={{ marginTop: 16, borderTopWidth: 1, borderTopColor: '#E5E7EB', paddingTop: 16 }}>
+                <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#374151', marginBottom: 16 }}>Route Sequence</Text>
+                {routeData.sequence.map((stop, i) => (
+                  <View key={`timeline-${i}`} style={{ flexDirection: 'row', minHeight: 60 }}>
+                    <View style={{ alignItems: 'center', width: 32, marginRight: 12 }}>
+                      <View style={{
+                        width: 28, height: 28, borderRadius: 14,
+                        backgroundColor: stop.metadata.type === 'pickup' ? '#10B981' : '#EF4444',
+                        alignItems: 'center', justifyContent: 'center', zIndex: 2
+                      }}>
+                        <Text style={{ color: 'white', fontSize: 13, fontWeight: 'bold' }}>{stop.stopIndex}</Text>
+                      </View>
+                      {i < routeData.sequence.length - 1 && (
+                        <View style={{ width: 2, flex: 1, backgroundColor: '#E5E7EB', marginTop: -4, marginBottom: -4, zIndex: 1 }} />
+                      )}
+                    </View>
+                    <View style={{ flex: 1, paddingBottom: 20, paddingTop: 2 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: '#1F2937' }}>
+                        {stop.metadata.type === 'pickup' ? 'Pickup at ' : 'Dropoff '}
+                        {stop.metadata.title}
+                      </Text>
+                      {i === 0 ? (
+                        <Text style={{ fontSize: 13, color: '#6B7280', marginTop: 4 }}>
+                          Next Stop • {(routeData.fullRoute?.rawRoute?.legs?.[0]?.distance?.value / 1000 || 0).toFixed(1)} km
+                        </Text>
+                      ) : (
+                        <Text style={{ fontSize: 13, color: '#6B7280', marginTop: 4 }}>
+                          Length: {(stop.distanceMetersToReach / 1000).toFixed(1)} km • {Math.round(stop.estimatedSecondsToReach / 60)} min
+                        </Text>
+                      )}
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </TouchableOpacity>
         )}
 
         {isLoadingLocation ? (
@@ -281,6 +553,7 @@ export default function MapScreen() {
           </View>
         ) : (
           <MapView
+            ref={mapRef}
             provider={PROVIDER_GOOGLE}
             style={StyleSheet.absoluteFillObject}
             initialRegion={userLocation || DEFAULT_LOCATION}
@@ -288,47 +561,113 @@ export default function MapScreen() {
             showsMyLocationButton={true}
             showsCompass={true}
           >
-            {/* Pickup marker */}
-            {activeOrder && (
-              <Marker
-                coordinate={{
-                  latitude: activeOrder.pickupLatitude || 25.2048,
-                  longitude: activeOrder.pickupLongitude || 55.2708,
-                }}
-                title={activeOrder.restaurant}
-                description="Pickup Location"
-                pinColor="#10B981"
-              />
-            )}
-
-            {/* Dropoff marker */}
-            {activeOrder && (
-              <Marker
-                coordinate={{
-                  latitude: activeOrder.dropoffLatitude || 25.197,
-                  longitude: activeOrder.dropoffLongitude || 55.278,
-                }}
-                title={activeOrder.details?.customerName || "Customer"}
-                description="Dropoff Location"
-                pinColor="#EF4444"
-              />
-            )}
-
-            {/* Route to Pickup (blue) */}
-            {toPickupCoords.length > 0 && (
+            {/* Zone Navigation Polyline */}
+            {!activeOrder && zoneRouteData?.coordinates?.length > 0 && (
               <Polyline
-                coordinates={toPickupCoords}
+                coordinates={zoneRouteData.coordinates}
+                strokeColor="#8B5CF6"
+                strokeWidth={5}
+                lineJoin="round"
+              />
+            )}
+
+            {/* Zone Destination Marker */}
+            {!activeOrder && navigationTarget && (
+              <Marker
+                coordinate={{
+                  latitude: navigationTarget.latitude,
+                  longitude: navigationTarget.longitude,
+                }}
+                title={navigationTarget.zoneName}
+                description="Target Zone Center"
+                pinColor="#8B5CF6"
+              />
+            )}
+
+            {optimizedRouteCoords.length > 0 && (
+              <Polyline
+                coordinates={optimizedRouteCoords}
+                strokeColor="#007AFF"
+                strokeWidth={5}
+                lineJoin="round"
+              />
+            )}
+            {/* Multi-order pickup markers */}
+            {(routeData?.pickups || activeOrders.map(o => ({ latitude: o.pickupLatitude || 25.2048, longitude: o.pickupLongitude || 55.2708, metadata: { title: o.restaurant } }))).map((pickup, index) => (
+              <Marker
+                key={`pickup-${index}`}
+                coordinate={{
+                  latitude: pickup.latitude,
+                  longitude: pickup.longitude,
+                }}
+                title={pickup.metadata?.title || "Pickup Location"}
+                description={`Pickup Stop ${index + 1}`}
+                anchor={{ x: 0.5, y: 1 }}
+              >
+                <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                  <View style={{
+                    backgroundColor: '#10B981',
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 12,
+                    borderWidth: 2,
+                    borderColor: 'white',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.25,
+                    shadowRadius: 3.84,
+                    elevation: 5
+                  }}>
+                    <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>
+                      {index + 1}
+                    </Text>
+                  </View>
+                  <View style={{ width: 3, height: 12, backgroundColor: '#10B981', marginTop: -2 }} />
+                </View>
+              </Marker>
+            ))}
+
+            {/* Multi-order dropoff markers */}
+            {(routeData?.dropoffs || activeOrders.map(o => ({ latitude: o.dropoffLatitude || 25.197, longitude: o.dropoffLongitude || 55.278, metadata: { title: o.restaurant } }))).map((dropoff, index) => (
+              <Marker
+                key={`dropoff-${index}`}
+                coordinate={{
+                  latitude: dropoff.latitude,
+                  longitude: dropoff.longitude,
+                }}
+                title={dropoff.metadata?.title || "Dropoff Location"}
+                description={`Dropoff Stop ${index + 1}`}
+                anchor={{ x: 0.5, y: 1 }}
+              >
+                <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+                  <View style={{
+                    backgroundColor: '#EF4444',
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 12,
+                    borderWidth: 2,
+                    borderColor: 'white',
+                    shadowColor: '#000',
+                    shadowOffset: { width: 0, height: 2 },
+                    shadowOpacity: 0.25,
+                    shadowRadius: 3.84,
+                    elevation: 5
+                  }}>
+                    <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 14 }}>
+                      {index + 1}
+                    </Text>
+                  </View>
+                  <View style={{ width: 3, height: 12, backgroundColor: '#EF4444', marginTop: -2 }} />
+                </View>
+              </Marker>
+            ))}
+
+            {/* Complete route as ONE polyline */}
+            {fullRouteCoords.length > 0 && (
+              <Polyline
+                coordinates={fullRouteCoords}
                 strokeColor="#3B82F6"
                 strokeWidth={5}
-              />
-            )}
-
-            {/* Route to Dropoff (orange) */}
-            {toDropoffCoords.length > 0 && (
-              <Polyline
-                coordinates={toDropoffCoords}
-                strokeColor="#F97316"
-                strokeWidth={4}
               />
             )}
           </MapView>

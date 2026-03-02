@@ -43,20 +43,23 @@ class AuthService:
             db.flush()
 
             if data.role == UserRole.ADMINISTRATOR:
-                # Determine role string based on access level
-                role_str = "admin_head" if data.access_level >= 2 else "admin"
+                # Determine role string based on access level if not provided
+                default_role = "admin_head" if data.access_level >= 2 else "admin"
+                actual_role = data.admin_role if data.admin_role else default_role
                 
                 profile = Administrator(
                     user_id=user.user_id,
                     admin_id=str(uuid.uuid4()),
-                    role=role_str,
+                    role=actual_role,
                     department=data.department if data.department else "",
                     access_level=data.access_level if data.access_level else 1
                 )
             elif data.role == UserRole.DRIVER:
                 profile = Driver(
                     user_id=user.user_id,
-                    name=data.name if data.name else ""
+                    name=data.name if data.name else "",
+                    vehicle_type=data.vehicle_type,
+                    license_plate=data.license_plate
                 )
             else:
                 raise HTTPException(
@@ -71,10 +74,11 @@ class AuthService:
             return UserResponse.model_validate(user)
         except Exception as e:
             db.rollback()
-            delete_firebase_user(firebase_user)
+            if 'firebase_user' in locals():
+                delete_firebase_user(firebase_user)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Error creating user",
+                detail=f"Error creating user: {str(e)}",
             )
     
     @staticmethod

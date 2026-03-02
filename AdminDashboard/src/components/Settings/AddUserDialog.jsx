@@ -30,7 +30,7 @@ export function AddUserDialog() {
   // Get current user info to determine access level
   const user = JSON.parse(localStorage.getItem("optiride_user") || "{}");
   const currentUserAccessLevel = user.access_level || 1;
-  const isAdminHead = currentUserAccessLevel >= 2;
+  const isSeniorAdmin = currentUserAccessLevel >= 3;
 
   const [formData, setFormData] = useState({
     email: "",
@@ -40,6 +40,9 @@ export function AddUserDialog() {
     role: "driver", // Default to driver
     department: "",
     access_level: 1,
+    admin_role: "admin", // Default for admins
+    vehicle_type: "bike", // Default for drivers
+    license_plate: "",
   });
 
   const handleInputChange = (field, value) => {
@@ -55,6 +58,9 @@ export function AddUserDialog() {
       role: "driver",
       department: "",
       access_level: 1,
+      admin_role: "admin",
+      vehicle_type: "bike",
+      license_plate: "",
     });
   };
 
@@ -83,10 +89,14 @@ export function AddUserDialog() {
         role: formData.role,
       };
 
-      // Add admin-specific fields if creating an administrator
+      // Add role-specific fields
       if (formData.role === "administrator") {
         userData.department = formData.department;
         userData.access_level = formData.access_level;
+        userData.admin_role = formData.admin_role;
+      } else if (formData.role === "driver") {
+        userData.vehicle_type = formData.vehicle_type;
+        userData.license_plate = formData.license_plate;
       }
 
       // Call the API
@@ -101,9 +111,27 @@ export function AddUserDialog() {
       setOpen(false);
     } catch (error) {
       console.error("Error creating user:", error);
+
+      let errorMessage = "Failed to create user. Please try again.";
+
+      // Parse specific backend error messages for cleaner display
+      const backendDetail = error.response?.data?.detail || error.message || "";
+
+      if (backendDetail.includes("TOO_SHORT") && backendDetail.includes("INVALID_PHONE_NUMBER")) {
+        errorMessage = "Invalid Phone Number: The number is too short.";
+      } else if (backendDetail.includes("Email already exists")) {
+        errorMessage = "A user with this email already exists.";
+      } else if (backendDetail.includes("Phone number already exists")) {
+        errorMessage = "This phone number is already registered.";
+      } else if (typeof backendDetail === 'string' && backendDetail !== "") {
+        // If it starts with the prefix we added in security.py, clean it up
+        errorMessage = backendDetail.replace("Error creating user in Firebase: ", "");
+        errorMessage = errorMessage.replace("Error creating user: ", "");
+      }
+
       toast({
         title: "Error",
-        description: error.response?.data?.detail || "Failed to create user. Please try again.",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -123,8 +151,8 @@ export function AddUserDialog() {
         <DialogHeader>
           <DialogTitle>Add New User</DialogTitle>
           <DialogDescription>
-            Create a new {isAdminHead ? "driver or administrator" : "driver"} account.
-            {!isAdminHead && " (Only admin heads can create administrator accounts)"}
+            Create a new {isSeniorAdmin ? "driver or administrator" : "driver"} account.
+            {!isSeniorAdmin && " (Only senior admin heads can create accounts)"}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit}>
@@ -135,7 +163,7 @@ export function AddUserDialog() {
               <Select
                 value={formData.role}
                 onValueChange={(value) => handleInputChange("role", value)}
-                disabled={!isAdminHead}
+                disabled={!isSeniorAdmin}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -147,7 +175,7 @@ export function AddUserDialog() {
                       <span>Driver</span>
                     </div>
                   </SelectItem>
-                  {isAdminHead && (
+                  {isSeniorAdmin && (
                     <SelectItem value="administrator">
                       <div className="flex items-center gap-2">
                         <Shield className="w-4 h-4" />
@@ -209,6 +237,39 @@ export function AddUserDialog() {
               </div>
             </div>
 
+            {/* Driver-Specific Fields */}
+            {formData.role === "driver" && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="vehicle_type">Vehicle Type *</Label>
+                  <Select
+                    value={formData.vehicle_type}
+                    onValueChange={(value) => handleInputChange("vehicle_type", value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="bike">Bike</SelectItem>
+                      <SelectItem value="car">Car</SelectItem>
+                      <SelectItem value="van">Van</SelectItem>
+                      <SelectItem value="truck">Truck</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="license_plate">License Plate *</Label>
+                  <Input
+                    id="license_plate"
+                    placeholder="ABC-1234"
+                    value={formData.license_plate}
+                    onChange={(e) => handleInputChange("license_plate", e.target.value)}
+                    required={formData.role === "driver"}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Administrator-Specific Fields */}
             {formData.role === "administrator" && (
               <>
@@ -232,13 +293,22 @@ export function AddUserDialog() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="1">Level 1 - Admin (Can create drivers)</SelectItem>
-                        <SelectItem value="2">Level 2 - Admin Head (Can create admins & drivers)</SelectItem>
+                        <SelectItem value="1">Level 1 - Admin</SelectItem>
+                        <SelectItem value="2">Level 2 - Admin Head</SelectItem>
                         <SelectItem value="3">Level 3 - Senior Admin Head</SelectItem>
                         <SelectItem value="4">Level 4 - Director</SelectItem>
                         <SelectItem value="5">Level 5 - Executive</SelectItem>
                       </SelectContent>
                     </Select>
+                    <div className="space-y-2">
+                      <Label htmlFor="admin_role">Role</Label>
+                      <Input
+                        id="admin_role"
+                        placeholder="Operations Manager"
+                        value={formData.admin_role}
+                        onChange={(e) => handleInputChange("admin_role", e.target.value)}
+                      />
+                    </div>
                   </div>
                 </div>
               </>

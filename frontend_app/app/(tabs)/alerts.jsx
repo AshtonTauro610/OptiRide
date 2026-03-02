@@ -200,7 +200,7 @@ export default function AlertsScreen() {
 
   const formatTimestamp = (timestamp) => {
     if (!timestamp) return "";
-    const date = new Date(timestamp);
+    const date = new Date(`${timestamp}Z`.replace('ZZ', 'Z'));
     const now = new Date();
     const diffMs = now - date;
     const diffMins = Math.floor(diffMs / 60000);

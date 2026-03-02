@@ -1,4 +1,5 @@
 import { API_BASE_URL } from "./config";
+import { DeviceEventEmitter } from "react-native";
 
 export class ApiError extends Error {
   constructor(message, status, details) {
@@ -26,10 +27,20 @@ export async function apiFetch(path, options = {}) {
   if (!response.ok) {
     let errorDetails;
     try {
-      errorDetails = await response.json();
+      const text = await response.text();
+      try {
+        errorDetails = JSON.parse(text);
+      } catch (_) {
+        errorDetails = text;
+      }
     } catch (_) {
-      errorDetails = await response.text();
+      errorDetails = "Failed to parse error response";
     }
+
+    if (response.status === 401) {
+      DeviceEventEmitter.emit('auth_error_401');
+    }
+
     throw new ApiError(`Request failed with status ${response.status}`, response.status, errorDetails);
   }
 

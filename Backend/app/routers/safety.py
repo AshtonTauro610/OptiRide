@@ -3,15 +3,21 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from typing import List, Optional
 from datetime import datetime
+from pydantic import BaseModel
 from app.services.safety_monitoring_service import SafetyMonitoringService
 from app.services.distance_tracking_service import DistanceTrackingService
 from app.core.dependencies import get_current_driver
+from app.core.socket_manager import socket_manager
 from app.schemas.sensor import SensorDataBatch, DistanceStats
 from app.models.alert import Alert
 from app.models.driver import Driver
 from app.schemas.alert import AlertResponse, AlertAcknowledge
 from geoalchemy2.functions import ST_X, ST_Y
 from sqlalchemy import desc
+
+class EmergencyResponse(BaseModel):
+    driver_id: str
+    status: str
 
 router = APIRouter()
 
@@ -145,3 +151,22 @@ def acknowledge_alert(
         "longitude": result.longitude,
         "latitude": result.latitude
     }
+
+@router.post("/emergency-response")
+def handle_emergency_response(data: EmergencyResponse, db: Session = Depends(get_db), current_driver: Driver = Depends(get_current_driver)):
+    safety_service = SafetyMonitoringService(db)
+    result = safety_service.resolve_emergency(data.driver_id, data.status)
+    return result    
+
+# Simulate a crash event for Testing Purpose
+
+@router.post("/simulate-crash")
+async def simulate_crash(
+    current_driver: Driver = Depends(get_current_driver)
+):
+    alert_data = {
+        "alert_type": "CRITICAL_CRASH",
+        "message" : "Crash detected! Are you okay? Emergency services will be called in 60s."
+    }
+    await socket_manager.notify_safety_alert(current_driver.driver_id, alert_data)
+    return {"status": "success", "message": "Crash event simulated and pushed to frontend via Socket.IO."}

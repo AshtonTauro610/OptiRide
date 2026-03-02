@@ -28,6 +28,7 @@ class Order(Base):
     restaurant_name = Column(String, nullable=False)
     restaurant_contact = Column(String, nullable=False)
     price = Column(Float, default=0.0)
+    delivery_fee = Column(Float, nullable=True)
     
 
     distance_km = Column(Float, nullable=True)
@@ -49,3 +50,7 @@ class Order(Base):
     # Relationships
     driver = relationship("Driver", back_populates="orders")
     assignment = relationship("Assignment", back_populates="orders")
+
+    @property
+    def optimized_sequence(self):
+        return self.assignment.optimized_sequence if self.assignment else None
