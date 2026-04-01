@@ -130,5 +130,15 @@ export const orderService = {
             throw handleApiError(error);
         }
     },
+    // Get active order locations (Admin only)
+    async getActiveOrderLocations() {
+        try {
+            const response = await apiClient.get('/orders/active-locations');
+            return response.data;
+        }
+        catch (error) {
+            throw handleApiError(error);
+        }
+    },
 };
 

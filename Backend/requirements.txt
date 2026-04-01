@@ -10,6 +10,9 @@ shapely==2.0.2
 firebase-admin==6.3.0
 opencv-python==4.8.1.78
 numpy==1.26.2
+pandas==2.2.3
+scikit-learn==1.5.2
+joblib==1.4.2
 httpx==0.25.2
 requests==2.31.0
 python-socketio==5.16.0
@@ -17,7 +20,12 @@ python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
 python-dotenv==1.0.0
 email-validator==2.1.0
+scipy==1.11.4
 pytest==7.4.3
 pytest-asyncio==0.21.1
 black==23.12.1
 flake8==6.1.0
+googlemaps==4.12.0
+redis==5.0.1
+confluent-kafka==2.3.0
+mediapipe==0.10.9

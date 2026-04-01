@@ -23,8 +23,8 @@ class Administrator(Base):
 
     user_id = Column(String, ForeignKey('users.user_id'), primary_key=True)
     admin_id = Column(String, unique=True, nullable=False)
-    role = Column(String, nullable=False)
+    role = Column(String, nullable=False)  # 'admin' or 'admin_head'
     department = Column(String) 
-    access_level = Column(Integer, default=1)  # 1 to 5
+    access_level = Column(Integer, default=1)  # 1 = admin, 2+ = admin_head
 
     user = relationship("User", backref="administrator")

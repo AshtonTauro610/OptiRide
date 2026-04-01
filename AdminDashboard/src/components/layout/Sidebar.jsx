@@ -23,7 +23,7 @@ export function Sidebar() {
             {/* Logo */}
             <div className="p-6">
                 <h1 className="text-xl font-bold text-sidebar-foreground">
-                    Logistics Control
+                    Optiride
                 </h1>
             </div>
 

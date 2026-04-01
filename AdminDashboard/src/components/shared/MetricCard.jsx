@@ -15,7 +15,7 @@ export function MetricCard({ title, value, subtitle, icon: Icon, trend, iconColo
                                 ? "bg-success/10 text-success"
                                 : "bg-destructive/10 text-destructive"
                         )}>
-                            {trend.isPositive ? "+" : ""}{trend.value}
+                            {trend.value}
                         </span>
                     )}
                 </div>

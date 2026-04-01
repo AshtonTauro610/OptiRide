@@ -1,14 +1,14 @@
-# Python stuff
 __pycache__/
 *.py[cod]
 *$py.class
 .venv/
 .env
-
-# Firebase
 serviceAccount.json
 
-# Tooling
 .pytest_cache/
 .coverage
 htmlcov/
+
+scripts/
+ml/models/
+ml/face_landmarker.task

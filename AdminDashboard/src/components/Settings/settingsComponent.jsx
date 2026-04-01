@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Search, LogOut } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,6 +10,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useTheme } from "next-themes";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, } from "@/components/ui/dialog";
+import { AddUserDialog } from "./AddUserDialog";
 
 export function Settings({ onLogout }) {
   const { theme, setTheme } = useTheme();
@@ -243,6 +244,19 @@ export function Settings({ onLogout }) {
               </Dialog>
             </div>
           </CardContent>
+        </Card>
+
+        {/* User Management Card */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-base">User Management</CardTitle>
+                <CardDescription>Create and manage driver and administrator accounts</CardDescription>
+              </div>
+              <AddUserDialog />
+            </div>
+          </CardHeader>
         </Card>
 
         {/* Settings Grid */}

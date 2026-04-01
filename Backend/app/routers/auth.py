@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.db.database import get_db
-from app.core.dependencies import get_current_admin, get_current_user
+from app.core.dependencies import get_current_admin, get_current_user, get_current_admin_head
 from app.services.auth_service import AuthService
-from app.schemas.auth import LoginRequest, AdminCreateUserRequest, LoginResponse, UserResponse, FirebaseLoginRequest
+from app.schemas.auth import LoginRequest, AdminCreateUserRequest, LoginResponse, UserResponse, FirebaseLoginRequest, UserRole
 
 router = APIRouter()
 
@@ -11,11 +11,12 @@ router = APIRouter()
 def admin_create_user(
     data: AdminCreateUserRequest,
     db: Session = Depends(get_db),
-    admin = Depends(get_current_admin)
+    admin = Depends(get_current_admin_head)
 ):
     auth_service = AuthService()
+    
     admin_id = admin.admin_id
-    user = auth_service.create_user(data=data, db=db, admin_id=admin_id)
+    user = auth_service.create_user(data=data, db=db, admin_id=admin_id, creator_access_level=admin.access_level)
 
     return UserResponse.model_validate(user)
 
@@ -23,7 +24,7 @@ def admin_create_user(
 def admin_delete_user(
     user_id: str,
     db: Session = Depends(get_db),
-    admin = Depends(get_current_admin)
+    admin = Depends(get_current_admin_head)
 ):
     auth_service = AuthService()
     auth_service.delete_user(user_id=user_id, db=db)

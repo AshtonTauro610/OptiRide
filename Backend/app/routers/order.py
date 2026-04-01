@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from pydantic import BaseModel
 from datetime import datetime
 from app.db.database import get_db
 from app.core.dependencies import get_current_driver, get_current_admin, get_current_user
@@ -10,7 +11,13 @@ from app.models.driver import Driver
 from app.services.order_service import OrderService
 from app.schemas.order import OrderAssign, OrderCreate, OrderDeliver, OrderPickup, OrderResponse, OrderUpdate, OrderStats, OrderStatus
 from geoalchemy2.functions import ST_X, ST_Y
+from app.models.order import Order
+from geoalchemy2.functions import ST_Distance
 
+class DispatchOrderRequest(BaseModel):
+    driver_id: str
+    zone_id: str
+    
 router = APIRouter()
 
 @router.post("/", response_model=OrderResponse)
@@ -37,40 +44,59 @@ async def create_order(
 async def webhook_create_order(
     order_data: OrderCreate,
     auto_assign: bool = False,
+    driver_id: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """
-    Order received notif as requested by Patrick
-    Example Webhook JSON payload:
-    {
-        "pickup_address": "123 Main St",
-        "pickup_latitude": 40.7128,
-        "pickup_longitude": -74.0060,
-        "dropoff_address": "456 Park Ave",
-        "dropoff_latitude": 40.7589,
-        "dropoff_longitude": -73.9851,
-        "customer_name": "John Doe",
-        "customer_contact": "+1234567890",
-        "restaurant_name": "Pizza Palace",
-        "restaurant_contact": "+0987654321",
-        "price": 25.50
-    }
-    """
+
     order_service = OrderService(db)
     order = order_service.create_order(order_data)
     
-    if auto_assign:
+    # If specific driver_id provided, assign to that driver
+    if driver_id:
+        try:
+            order = order_service.offer_to_driver(order.order_id, driver_id)
+            await socket_manager.notify_new_order_to_driver(driver_id, {
+                "order_id": order.order_id,
+                "pickup_address": order.pickup_address,
+                "pickup_latitude": order.pickup_latitude,
+                "pickup_longitude": order.pickup_longitude,
+                "dropoff_address": order.dropoff_address,
+                "dropoff_latitude": order.dropoff_latitude,
+                "dropoff_longitude": order.dropoff_longitude,
+                "customer_name": order.customer_name,
+                "customer_contact": order.customer_contact,
+                "restaurant_name": order.restaurant_name,
+                "restaurant_contact": order.restaurant_contact,
+                "price": order.price,
+                "estimated_distance_km": order.distance_km,
+                "estimated_duration_min": order.duration_min,
+                "estimated_pickup_time": order.pickup_time.isoformat() if order.pickup_time else None,
+                "estimated_dropoff_time": order.dropoff_time.isoformat() if order.dropoff_time else None,
+            })
+        except HTTPException:
+            pass
+    elif auto_assign:
         try:
             order = order_service.auto_assign_order(order.order_id)
-            # Notify driver about new order offer
+            # Notify driver about new order offer with complete order data
             if order.driver_id:
                 await socket_manager.notify_new_order_to_driver(order.driver_id, {
                     "order_id": order.order_id,
                     "pickup_address": order.pickup_address,
+                    "pickup_latitude": order.pickup_latitude,
+                    "pickup_longitude": order.pickup_longitude,
                     "dropoff_address": order.dropoff_address,
+                    "dropoff_latitude": order.dropoff_latitude,
+                    "dropoff_longitude": order.dropoff_longitude,
+                    "customer_name": order.customer_name,
+                    "customer_contact": order.customer_contact,
+                    "restaurant_name": order.restaurant_name,
+                    "restaurant_contact": order.restaurant_contact,
                     "price": order.price,
-                    "distance_km": order.distance_km,
-                    "duration_min": order.duration_min
+                    "estimated_distance_km": order.distance_km,
+                    "estimated_duration_min": order.duration_min,
+                    "estimated_pickup_time": order.pickup_time.isoformat() if order.pickup_time else None,
+                    "estimated_dropoff_time": order.dropoff_time.isoformat() if order.dropoff_time else None,
                 })
         except HTTPException:
             pass
@@ -110,6 +136,15 @@ def get_pending_orders(
         "count": len(orders),
         "orders": [OrderResponse.model_validate(order) for order in orders]
     }
+
+@router.get("/active-locations")
+def get_active_order_locations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin)
+):
+    order_service = OrderService(db)
+    locations = order_service.get_active_order_locations()
+    return locations
 
 @router.get("/stats", response_model=OrderStats)
 def get_order_stats(
@@ -217,20 +252,59 @@ def get_my_offered_orders(
     db: Session = Depends(get_db),
     driver: Driver = Depends(get_current_driver)
 ):
-    from app.models.order import Order
-    orders = db.query(Order).filter(
+    
+    # Exclusive offers assigned to this driver
+    exclusive = db.query(Order).filter(
         Order.driver_id == driver.driver_id,
         Order.status == OrderStatus.offered.value
     ).all()
-    return orders
+    
+    # Broadcast offers (driver_id is NULL) within 10km
+    broadcast = []
+    if driver.location is not None:
+        broadcast = db.query(Order).filter(
+            Order.driver_id.is_(None),
+            Order.status == OrderStatus.offered.value,
+            ST_Distance(Order.pickup, driver.location, True) <= 10000  # 10km in meters
+        ).all()
+    
+    # Combine and deduplicate
+    seen = set()
+    combined = []
+    for o in exclusive + broadcast:
+        if o.order_id not in seen:
+            seen.add(o.order_id)
+            combined.append(o)
+    
+    return combined
 
 @router.get("/driver/orders")
 def get_driver_orders(
     db: Session = Depends(get_db),
     current_driver: Driver = Depends(get_current_driver),
 ):
+    """Get active orders for the current driver (assigned, picked_up)"""
     order_service = OrderService(db)
     orders = order_service.get_active_orders_for_driver(driver_id=current_driver.driver_id)
+    return {
+        "count": len(orders),
+        "orders": [OrderResponse.model_validate(order) for order in orders]
+    }
+
+@router.get("/driver/all-orders")
+def get_all_driver_orders(
+    db: Session = Depends(get_db),
+    current_driver: Driver = Depends(get_current_driver),
+    include_completed: bool = True,
+    days: int = 7,
+):
+    """Get all orders for the current driver (including completed and cancelled)"""
+    order_service = OrderService(db)
+    orders = order_service.get_all_orders_for_driver(
+        driver_id=current_driver.driver_id,
+        include_completed=include_completed,
+        days=days
+    )
     return {
         "count": len(orders),
         "orders": [OrderResponse.model_validate(order) for order in orders]
@@ -262,4 +336,14 @@ async def deliver_order(
     
     # Notify customer about delivery
     await socket_manager.notify_order_delivered(order.order_id)
+    return order
+
+@router.post("/dispatch")
+async def dispatch_order(
+    request: DispatchOrderRequest,
+    db: Session = Depends(get_db),
+    admin = Depends(get_current_admin)
+):
+    order_service = OrderService(db)
+    order = order_service.dispatch_orders(request.driver_id, request.zone_id)
     return order

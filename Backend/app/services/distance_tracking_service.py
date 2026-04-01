@@ -8,6 +8,8 @@ from app.models.driver import Driver
 from app.schemas.sensor import LocationData, DistanceStats
 from geoalchemy2.functions import ST_Distance, ST_MakePoint, ST_SetSRID, ST_Transform
 from geoalchemy2.elements import WKTElement
+import redis
+from app.core.redis_client import redis_client
 
 class DistanceTrackingService:
     def __init__(self, db: Session):
@@ -39,6 +41,41 @@ class DistanceTrackingService:
         driver = self.db.query(Driver).filter(Driver.driver_id == driver_id).first()
         if driver:
             driver.location = new_location_wkt
+            driver.updated_at = datetime.utcnow()
+            
+            if driver.status == "offline":
+                driver.status = "available"
+            if driver.duty_status == "off_duty":
+                driver.duty_status = "on_duty"
+                if not driver.report_time:
+                    driver.report_time = datetime.utcnow()
+
+            try:
+                if location_data.speed is not None:
+                    redis_client.set(f"driver:{driver_id}:speed", str(location_data.speed))
+                if location_data.heading is not None:
+                    redis_client.set(f"driver:{driver_id}:heading", str(location_data.heading))
+            except redis.exceptions.ConnectionError:
+                pass
+
+            throttle_key = f"driver_telemetry_throttle:{driver_id}"
+            try:
+                is_throttled = redis_client.get(throttle_key)
+                if not is_throttled:
+                    cached_speed = redis_client.get(f"driver:{driver_id}:speed")
+                    cached_heading = redis_client.get(f"driver:{driver_id}:heading")
+                    if cached_speed is not None:
+                        driver.current_speed = float(cached_speed)
+                    if cached_heading is not None:
+                        driver.heading = float(cached_heading)
+                    self.db.commit()
+                    redis_client.setex(throttle_key, 30, "1")
+            except redis.exceptions.ConnectionError:
+                if location_data.speed is not None:
+                    driver.current_speed = location_data.speed
+                if location_data.heading is not None:
+                    driver.heading = location_data.heading
+                self.db.commit()
 
         gps_track = GPSTrack(
             driver_id=driver_id,
@@ -89,14 +126,15 @@ class DistanceTrackingService:
             end_time=last_point.recorded_at if total_duration_hours > 0 else None
         )
     
-    def get_today_distance(self, driver_id: str) -> float:
-        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    def get_today_distance(self, driver_id: str, start_time: Optional[datetime] = None) -> float:
+        if not start_time:
+            start_time = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
         result = self.db.query(
-            func.max(GPSTrack.cumulative_distance)
+            func.sum(GPSTrack.distance_from_last)
         ).filter(
             GPSTrack.driver_id == driver_id,
-            GPSTrack.recorded_at >= today_start
+            GPSTrack.recorded_at >= start_time
         ).scalar()
 
-        return result if result else 0.0
+        return round(float(result), 2) if result else 0.0

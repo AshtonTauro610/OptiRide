@@ -1,18 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from typing import Optional, List
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import datetime
 from geoalchemy2.functions import ST_X, ST_Y
 from app.db.database import get_db
 from app.core.dependencies import get_current_driver, get_current_user, get_current_admin
 from app.core.socket_manager import socket_manager, emit_sync
 from app.services.driver_service import DriverService
 from app.models.driver import Driver
+from app.models.alert import Alert
 from app.models.user import User
+from app.models.sensor_record import SensorRecord
 from app.schemas.driver import (
     DriverCreate, DriverUpdate, LocationSchema, StatusUpdate,
     DriverResponse, DriverPerformanceStats, NearbyDriverResponse,
     ShiftStart, ShiftEnd, ShiftSummary, BreakRequest, DriverStatus, DutyStatus,
-    DriverListResponse, ZoneUpdate
+    DriverListResponse, ZoneUpdate, TelemetryUpdate, DriverWithTodayStats
 )
 
 router = APIRouter()
@@ -56,11 +60,28 @@ def list_drivers(
 ):
     driver_service = DriverService(db)
     total = db.query(Driver).count()
-    drivers = driver_service.list_drivers(skip=skip, limit=limit)
-    return DriverListResponse(
-        total=total,
-        drivers=[DriverResponse.model_validate(driver) for driver in drivers]
-    )
+    drivers = driver_service.get_all_drivers(skip=skip, limit=limit)
+    
+    drivers_with_stats = []
+    for driver in drivers:
+        stats = driver_service.get_performance_stats(driver.driver_id)
+        
+        driver_resp = DriverWithTodayStats.model_validate(driver)
+        driver_resp.today_safety_score = stats.today_safety_score
+        driver_resp.today_safety_alerts = stats.today_safety_alerts
+        driver_resp.today_harsh_braking = stats.today_harsh_braking
+        driver_resp.today_speeding = stats.today_speeding
+        driver_resp.today_fatigue_alerts = stats.today_fatigue_alerts
+        driver_resp.fatigue_score = stats.current_fatigue_score
+        driver_resp.current_speed = getattr(stats, 'current_speed', 0.0)
+        
+        if driver.user:
+            driver_resp.email = driver.user.email
+            driver_resp.phone_number = driver.user.phone_number
+
+        drivers_with_stats.append(driver_resp)
+    
+    return DriverListResponse(drivers=drivers_with_stats, total=total)
 
 @router.get("/active-locations")
 def get_active_driver_locations(
@@ -283,3 +304,13 @@ def delete_driver(
     driver_service = DriverService(db)
     driver_service.delete_driver(driver_id=driver_id)
     return {"detail": f"Driver: {driver_id} deleted successfully"}
+
+@router.patch("/me/telemetry", response_model=DriverResponse)
+def update_my_telemetry(
+    telemetry_data: TelemetryUpdate,
+    db: Session = Depends(get_db),
+    driver = Depends(get_current_driver)
+):
+    driver_service = DriverService(db)
+    updated_driver = driver_service.update_telemetry(driver_id=driver.driver_id, telemetry=telemetry_data)
+    return DriverResponse.model_validate(updated_driver)

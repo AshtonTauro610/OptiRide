@@ -28,7 +28,13 @@ class AdminCreateUserRequest(BaseModel):
     phone_number : Optional[str] = None
     role : UserRole
     name : Optional[str] = None
+    # Administrator-specific
     department : Optional[str] = None
+    access_level : Optional[int] = Field(default=1, ge=1, le=5)
+    admin_role : Optional[str] = None
+    # Driver-specific
+    vehicle_type : Optional[str] = None
+    license_plate : Optional[str] = None
 
     @field_validator('phone_number')
     @classmethod
@@ -44,7 +50,8 @@ class AdminCreateUserRequest(BaseModel):
                 "password": "StrongPassword123!",
                 "phone_number": "+1234567890",
                 "role": "driver",
-                "name": "John Doe"
+                "name": "John Doe",
+                "access_level": 1
             }
         }
     }
@@ -78,6 +85,7 @@ class UserResponse(BaseModel):
     name : str
     user_type : UserRole
     created_by : Optional[str] = None
+    access_level : Optional[int] = None  # Only populated for administrators
 
     class Config:
         from_attributes = True

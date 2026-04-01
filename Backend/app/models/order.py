@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, ForeignKey, Float
+from sqlalchemy import Column, String, DateTime, ForeignKey, Float, Integer
 from sqlalchemy.orm import relationship
 from geoalchemy2 import Geometry
 from app.db.database import Base
@@ -28,6 +28,7 @@ class Order(Base):
     restaurant_name = Column(String, nullable=False)
     restaurant_contact = Column(String, nullable=False)
     price = Column(Float, default=0.0)
+    delivery_fee = Column(Float, nullable=True)
     
 
     distance_km = Column(Float, nullable=True)
@@ -44,7 +45,12 @@ class Order(Base):
     assigned_at = Column(DateTime)
     picked_up_at = Column(DateTime)
     delivered_at = Column(DateTime)
+    customer_rating = Column(Integer, nullable=True) # Remove
 
     # Relationships
     driver = relationship("Driver", back_populates="orders")
     assignment = relationship("Assignment", back_populates="orders")
+
+    @property
+    def optimized_sequence(self):
+        return self.assignment.optimized_sequence if self.assignment else None

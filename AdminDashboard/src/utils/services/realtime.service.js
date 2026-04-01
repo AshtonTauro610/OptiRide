@@ -25,7 +25,7 @@ class RealtimeService {
         }
         this.isConnecting = true;
         try {
-            const token = localStorage.getItem('auth_token');
+            const token = localStorage.getItem('optiride_token');
             const wsUrl = token ? `${this.url}?token=${token}` : this.url;
             this.ws = new WebSocket(wsUrl);
             this.ws.onopen = () => {

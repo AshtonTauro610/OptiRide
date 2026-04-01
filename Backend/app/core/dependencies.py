@@ -56,3 +56,28 @@ def get_current_driver(
             detail="Driver profile not found"
         )
     return driver
+
+def get_current_admin_head(
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+) -> Administrator:
+    if current_user.user_type != 'administrator':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions - admin access required"
+        )
+
+    admin = db.query(Administrator).filter(Administrator.user_id == current_user.user_id).first()
+    if not admin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Administrator profile not found"
+        )
+    
+    if admin.access_level < 3:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions - senior admin head access required"
+        )
+    
+    return admin

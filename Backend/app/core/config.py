@@ -1,6 +1,7 @@
 import os
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from typing import List
 
 class Settings(BaseSettings):
     # App Settings
@@ -10,7 +11,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
 
     # Database Settings
-    DATABASE_URL: str = os.getenv("DATABASE_URL")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/optiride")
 
     # Firebase Settings
     FIREBASE_CREDENTIALS_PATH: str = os.getenv("FIREBASE_CREDENTIALS_PATH", "serviceAccount.json")
@@ -22,14 +23,11 @@ class Settings(BaseSettings):
 
     # External API Settings
     GOOGLE_MAPS_API_KEY: str = os.getenv("GOOGLE_MAPS_API_KEY", "")
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
-    # CORS Settings
-    ALLOWED_ORIGINS: list = ["*"] # Change this in production to specific domains
-
-    # Cache Settings (Maybe Redis?)
-
-    # Notification Service Settings 
+    # Redis Settings
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", 6379))
 
     class Config:
         env_file = ".env"
@@ -40,3 +38,10 @@ def get_settings():
     return Settings()
 
 settings = get_settings()
+# CORS origins - hardcoded for now since env parsing is having issues
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:3000", 
+    "http://localhost:8000",
+    "*"
+]

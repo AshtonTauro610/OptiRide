@@ -3,15 +3,21 @@ from firebase_admin import auth, credentials
 from fastapi import Depends, HTTPException, status
 from typing import Optional
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import os
 
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.user import User
 
-if not firebase_admin._apps:
-    cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
-    firebase_admin.initialize_app(cred)
+# Only initialize Firebase if credentials file exists
+if os.path.exists(settings.FIREBASE_CREDENTIALS_PATH) and not firebase_admin._apps:
+    try:
+        cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+        firebase_admin.initialize_app(cred)
+    except Exception as e:
+        print(f"Warning: Firebase initialization failed: {e}")
+        print("Firebase authentication will be disabled for development")
 
 security_scheme = HTTPBearer()
 
@@ -83,9 +89,18 @@ def create_firebase_user(email: str, password: str, phone_number: Optional[str] 
             detail="Phone number already exists",
         )
     except Exception as e:
+        error_msg = str(e)
+        if "INVALID_PHONE_NUMBER" in error_msg:
+            if "TOO_SHORT" in error_msg:
+                error_msg = "Phone number is too short"
+            else:
+                error_msg = "Invalid phone number format"
+        elif "EMAIL_EXISTS" in error_msg:
+            error_msg = "Email already exists"
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error creating user in Firebase",
+            detail=error_msg,
         )
 
 def delete_firebase_user(uid: str):

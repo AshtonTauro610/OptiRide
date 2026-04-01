@@ -12,43 +12,42 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useTheme } from "next-themes";
 import { Popover, PopoverContent, PopoverTrigger, } from "@/components/ui/popover";
-// Fix for default marker icons in React-Leaflet
+import { useAllocationStatus, useActiveOrderLocations, useActiveDriverLocations } from "@/utils/hooks/use-api";
+
+
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-    iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
-    iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
-    shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+  iconRetinaUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png",
+  iconUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
+  shadowUrl: "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
+
 // Order status colors
 const statusColors = {
-    completed: "#22c55e", // Green
-    active: "#3b82f6", // Blue
-    failed: "#ef4444", // Red
+  pending: "#eab308", // Yellow
+  offered: "#f97316", // Orange
+  assigned: "#3b82f6", // Blue
+  picked_up: "#6366f1", // Indigo
+  delivered: "#22c55e", // Green
 };
-// Zone colors for 20 distinct Dubai zones
-const zoneColors = {
-    A1: "#ef4444", A2: "#dc2626",
-    B1: "#f97316", B2: "#ea580c",
-    C1: "#eab308", C2: "#ca8a04",
-    D1: "#22c55e", D2: "#16a34a",
-    E1: "#14b8a6", E2: "#0d9488",
-    F1: "#3b82f6", F2: "#2563eb",
-    G1: "#6366f1", G2: "#4f46e5",
-    H1: "#8b5cf6", H2: "#7c3aed",
-    I1: "#ec4899", I2: "#db2777",
-    J1: "#06b6d4", J2: "#0891b2",
+
+
+const getZoneColor = (index) => {
+  const colors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#14b8a6", "#3b82f6", "#6366f1", "#8b5cf6", "#ec4899", "#06b6d4"];
+  return colors[index % colors.length];
 };
-// Custom marker icons for zones
+
+
 const createZoneIcon = (color, count) => {
-    return L.divIcon({
-        className: "custom-zone-icon",
-        html: `<div style="
+  return L.divIcon({
+    className: "custom-zone-icon",
+    html: `<div style="
       background-color: ${color};
       width: 36px;
       height: 36px;
       border-radius: 50%;
-      border: 3px solid white;
-      box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+      border: 2px solid white;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -56,291 +55,289 @@ const createZoneIcon = (color, count) => {
       font-size: 11px;
       color: white;
     ">${count}</div>`,
-        iconSize: [36, 36],
-        iconAnchor: [18, 18],
-    });
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+  });
 };
-// 20 Dubai zones spread across the city
-const highDemandZones = [
-    { id: "A1", count: 52, lat: 25.1972, lng: 55.2744, area: "Downtown Dubai" },
-    { id: "A2", count: 48, lat: 25.2100, lng: 55.2800, area: "DIFC" },
-    { id: "C1", count: 45, lat: 25.1850, lng: 55.2620, area: "Business Bay" },
-    { id: "C2", count: 38, lat: 25.2050, lng: 55.3450, area: "Dubai Creek Harbour" },
-    { id: "B1", count: 42, lat: 25.2700, lng: 55.3100, area: "Deira" },
-    { id: "B2", count: 39, lat: 25.2550, lng: 55.2950, area: "Bur Dubai" },
-    { id: "J2", count: 35, lat: 25.2150, lng: 55.2550, area: "Jumeirah 1" },
-    { id: "D1", count: 50, lat: 25.0800, lng: 55.1400, area: "Dubai Marina" },
-    { id: "D2", count: 44, lat: 25.0700, lng: 55.1500, area: "JLT" },
-    { id: "E1", count: 46, lat: 25.0780, lng: 55.1330, area: "JBR" },
-    { id: "E2", count: 41, lat: 25.1120, lng: 55.1380, area: "Palm West" },
-    { id: "F1", count: 36, lat: 25.1150, lng: 55.2000, area: "Al Barsha" },
-    { id: "F2", count: 33, lat: 25.1180, lng: 55.2010, area: "Mall of Emirates" },
-    { id: "J1", count: 29, lat: 25.1400, lng: 55.2350, area: "Al Quoz" },
-    { id: "G1", count: 31, lat: 25.1180, lng: 55.3800, area: "Silicon Oasis" },
-    { id: "G2", count: 27, lat: 25.1250, lng: 55.4100, area: "Academic City" },
-    { id: "H1", count: 28, lat: 25.0450, lng: 55.2200, area: "Sports City" },
-    { id: "H2", count: 25, lat: 25.0500, lng: 55.2450, area: "Motor City" },
-    { id: "I1", count: 24, lat: 25.0580, lng: 55.2680, area: "Arabian Ranches" },
-    { id: "I2", count: 32, lat: 25.2280, lng: 55.4050, area: "Mirdif" },
-];
-// Generate ~500 random order dots with status
-const generateOrderDots = () => {
-    const orders = [];
-    const statuses = ["completed", "active", "failed"];
-    const statusWeights = [0.6, 0.3, 0.1]; // 60% completed, 30% active, 10% failed
-    let orderId = 1;
-    highDemandZones.forEach((zone) => {
-        const orderCount = Math.floor(zone.count * 0.6) + Math.floor(Math.random() * 15);
-        for (let i = 0; i < orderCount; i++) {
-            const latOffset = (Math.random() - 0.5) * 0.025;
-            const lngOffset = (Math.random() - 0.5) * 0.025;
-            // Weighted random status
-            const rand = Math.random();
-            let status = "completed";
-            if (rand > statusWeights[0] + statusWeights[1]) {
-                status = "failed";
-            }
-            else if (rand > statusWeights[0]) {
-                status = "active";
-            }
-            orders.push({
-                id: `ORD-${orderId++}`,
-                lat: zone.lat + latOffset,
-                lng: zone.lng + lngOffset,
-                zoneId: zone.id,
-                status,
-            });
-        }
-    });
-    return orders;
-};
-const allOrders = generateOrderDots();
+
 // Cluster layer component
 function ClusterLayer({ orders, visibleStatuses }) {
-    const map = useMap();
-    useEffect(() => {
-        const clusterGroup = L.markerClusterGroup({
-            chunkedLoading: true,
-            maxClusterRadius: 50,
-            spiderfyOnMaxZoom: true,
-            showCoverageOnHover: false,
-            iconCreateFunction: (cluster) => {
-                const childCount = cluster.getChildCount();
-                const childMarkers = cluster.getAllChildMarkers();
-                // Count by status
-                let completed = 0, active = 0, failed = 0;
-                childMarkers.forEach((m) => {
-                    const status = m.options.orderStatus;
-                    if (status === "completed")
-                        completed++;
-                    else if (status === "active")
-                        active++;
-                    else if (status === "failed")
-                        failed++;
-                });
-                // Determine dominant color
-                let bgColor = statusColors.completed;
-                if (active >= completed && active >= failed)
-                    bgColor = statusColors.active;
-                if (failed >= completed && failed >= active)
-                    bgColor = statusColors.failed;
-                return L.divIcon({
-                    html: `<div style="
-            background-color: ${bgColor};
-            width: 40px;
-            height: 40px;
+  const map = useMap();
+  useEffect(() => {
+    if (!orders || orders.length === 0) return;
+
+    const clusterGroup = L.markerClusterGroup({
+      chunkedLoading: true,
+      maxClusterRadius: 40,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+      iconCreateFunction: (cluster) => {
+        const childCount = cluster.getChildCount();
+        return L.divIcon({
+          html: `<div style="
+            background-color: #3b82f6;
+            width: 32px;
+            height: 32px;
             border-radius: 50%;
-            border: 3px solid white;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+            border: 2px solid white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
             display: flex;
             align-items: center;
             justify-content: center;
             font-weight: bold;
-            font-size: 12px;
+            font-size: 11px;
             color: white;
           ">${childCount}</div>`,
-                    className: "marker-cluster-custom",
-                    iconSize: L.point(40, 40),
-                });
-            },
+          className: "marker-cluster-custom",
+          iconSize: L.point(32, 32),
         });
-        const filteredOrders = orders.filter(o => visibleStatuses.includes(o.status));
-        filteredOrders.forEach((order) => {
-            const marker = L.circleMarker([order.lat, order.lng], {
-                radius: 5,
-                fillColor: statusColors[order.status],
-                color: "white",
-                weight: 1,
-                opacity: 1,
-                fillOpacity: 0.9,
-            });
-            marker.options.orderStatus = order.status;
-            marker.bindPopup(`
-        <div style="font-size: 12px;">
-          <p style="font-weight: 600; margin: 0;">${order.id}</p>
+      },
+    });
+
+    const filteredOrders = orders.filter(o => visibleStatuses.includes(o.status));
+    filteredOrders.forEach((order) => {
+      const marker = L.circleMarker([order.pickup_latitude, order.pickup_longitude], {
+        radius: 4,
+        fillColor: statusColors[order.status] || "#94a3b8",
+        color: "white",
+        weight: 1,
+        opacity: 1,
+        fillOpacity: 0.8,
+      });
+      marker.options.orderStatus = order.status;
+      marker.bindPopup(`
+        <div style="font-size: 12px; padding: 4px;">
+          <p style="font-weight: 600; margin: 0;">Order: ${order.order_id.substring(0, 8)}</p>
           <p style="margin: 4px 0 0 0; color: ${statusColors[order.status]}; text-transform: capitalize;">
-            ${order.status}
+            Status: ${order.status.replace('_', ' ')}
+          </p>
+          <p style="margin: 2px 0 0 0; color: #64748b;">
+            Zone: ${order.pickup_zone || 'Unknown'}
           </p>
         </div>
       `);
-            clusterGroup.addLayer(marker);
-        });
-        map.addLayer(clusterGroup);
-        return () => {
-            map.removeLayer(clusterGroup);
-        };
-    }, [map, orders, visibleStatuses]);
-    return null;
+      clusterGroup.addLayer(marker);
+    });
+
+    map.addLayer(clusterGroup);
+    return () => {
+      map.removeLayer(clusterGroup);
+    };
+  }, [map, orders, visibleStatuses]);
+  return null;
 }
+
 // Map controls component
 function MapControls() {
-    const map = useMap();
-    return (<div className="absolute right-3 top-3 z-[1000] flex flex-col gap-1">
-      <Button size="icon" variant="secondary" className="h-8 w-8 bg-card/90 backdrop-blur-sm hover:bg-card shadow-md" onClick={() => map.zoomIn()}>
-        <ZoomIn className="h-4 w-4"/>
-      </Button>
-      <Button size="icon" variant="secondary" className="h-8 w-8 bg-card/90 backdrop-blur-sm hover:bg-card shadow-md" onClick={() => map.zoomOut()}>
-        <ZoomOut className="h-4 w-4"/>
-      </Button>
-      <Button size="icon" variant="secondary" className="h-8 w-8 bg-card/90 backdrop-blur-sm hover:bg-card shadow-md" onClick={() => map.setView([25.1500, 55.2500], 11)}>
-        <Locate className="h-4 w-4"/>
-      </Button>
-      <Button size="icon" variant="secondary" className="h-8 w-8 bg-card/90 backdrop-blur-sm hover:bg-card shadow-md" onClick={() => map.setView([25.1500, 55.2200], 12)}>
-        <Navigation className="h-4 w-4"/>
-      </Button>
-    </div>);
+  const map = useMap();
+  return (<div className="absolute right-3 top-3 z-[1000] flex flex-col gap-1">
+    <Button size="icon" variant="secondary" className="h-8 w-8 bg-card/90 backdrop-blur-sm hover:bg-card shadow-md" onClick={() => map.zoomIn()}>
+      <ZoomIn className="h-4 w-4" />
+    </Button>
+    <Button size="icon" variant="secondary" className="h-8 w-8 bg-card/90 backdrop-blur-sm hover:bg-card shadow-md" onClick={() => map.zoomOut()}>
+      <ZoomOut className="h-4 w-4" />
+    </Button>
+    <Button size="icon" variant="secondary" className="h-8 w-8 bg-card/90 backdrop-blur-sm hover:bg-card shadow-md" onClick={() => map.setView([25.1500, 55.2500], 11)}>
+      <Locate className="h-4 w-4" />
+    </Button>
+  </div>);
 }
+
 export function HighDemandMap() {
-    const [selectedZones, setSelectedZones] = useState(highDemandZones.map(z => z.id));
-    const [visibleStatuses, setVisibleStatuses] = useState(["completed", "active", "failed"]);
-    const { resolvedTheme, theme } = useTheme();
-    const mapTheme = (resolvedTheme ?? theme) === "dark" ? "dark" : "light";
-    const tileUrl = mapTheme === "dark"
-        ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-    const tileAttribution = mapTheme === "dark"
-        ? "&copy; OpenStreetMap contributors &copy; CARTO"
-        : "&copy; OpenStreetMap contributors";
-    const filteredOrders = useMemo(() => {
-        return allOrders.filter(o => selectedZones.includes(o.zoneId));
-    }, [selectedZones]);
-    const statusCounts = useMemo(() => {
-        const counts = { completed: 0, active: 0, failed: 0 };
-        filteredOrders.forEach(o => {
-            if (visibleStatuses.includes(o.status)) {
-                counts[o.status]++;
-            }
-        });
-        return counts;
-    }, [filteredOrders, visibleStatuses]);
-    const toggleZone = (zoneId) => {
-        setSelectedZones(prev => prev.includes(zoneId)
-            ? prev.filter(z => z !== zoneId)
-            : [...prev, zoneId]);
-    };
-    const toggleStatus = (status) => {
-        setVisibleStatuses(prev => prev.includes(status)
-            ? prev.filter(s => s !== status)
-            : [...prev, status]);
-    };
-    const selectAllZones = () => setSelectedZones(highDemandZones.map(z => z.id));
-    const clearAllZones = () => setSelectedZones([]);
-    return (<Card className="overflow-hidden">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <MapPin className="w-4 h-4 text-destructive"/>
-            High Demand Zones
-          </CardTitle>
-          <div className="flex items-center gap-2">
-            {/* Status Legend */}
-            <div className="flex gap-2 text-xs">
-              <button onClick={() => toggleStatus("completed")} className={`flex items-center gap-1 px-2 py-1 rounded transition-opacity ${visibleStatuses.includes("completed") ? "opacity-100" : "opacity-40"}`}>
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColors.completed }}/>
-                <span>{statusCounts.completed}</span>
-              </button>
-              <button onClick={() => toggleStatus("active")} className={`flex items-center gap-1 px-2 py-1 rounded transition-opacity ${visibleStatuses.includes("active") ? "opacity-100" : "opacity-40"}`}>
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColors.active }}/>
-                <span>{statusCounts.active}</span>
-              </button>
-              <button onClick={() => toggleStatus("failed")} className={`flex items-center gap-1 px-2 py-1 rounded transition-opacity ${visibleStatuses.includes("failed") ? "opacity-100" : "opacity-40"}`}>
-                <span className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColors.failed }}/>
-                <span>{statusCounts.failed}</span>
-              </button>
-            </div>
-            
-            {/* Zone Filter */}
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="sm" className="h-7 gap-1">
-                  <Filter className="h-3 w-3"/>
-                  Zones ({selectedZones.length})
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-80 p-3" align="end">
-                <div className="flex justify-between mb-2">
-                  <span className="text-sm font-medium">Filter Zones</span>
-                  <div className="flex gap-2">
-                    <button onClick={selectAllZones} className="text-xs text-primary hover:underline">
-                      All
-                    </button>
-                    <button onClick={clearAllZones} className="text-xs text-muted-foreground hover:underline">
-                      None
-                    </button>
-                  </div>
+  const { data: allocationData, loading: allocationLoading } = useAllocationStatus();
+  const { data: orderLocations, loading: ordersLoading } = useActiveOrderLocations();
+  const { data: driverLocations } = useActiveDriverLocations();
+
+  const [selectedZones, setSelectedZones] = useState([]);
+  const [visibleStatuses, setVisibleStatuses] = useState(["pending", "offered", "assigned", "picked_up"]);
+
+  const zones = useMemo(() => {
+    if (!allocationData?.zones) return [];
+    return allocationData.zones.map((z, index) => ({
+      id: z.zone_id,
+      name: z.zone_name,
+      pending: z.pending_orders,
+      drivers: z.total_drivers,
+      pressure: z.demand_pressure,
+      color: getZoneColor(index),
+      lat: z.latitude || 25.15,
+      lng: z.longitude || 55.25
+    }));
+  }, [allocationData]);
+
+  useEffect(() => {
+    if (zones.length > 0 && selectedZones.length === 0) {
+      setSelectedZones(zones.map(z => z.id));
+    }
+  }, [zones]);
+
+  const { resolvedTheme, theme } = useTheme();
+  const mapTheme = (resolvedTheme ?? theme) === "dark" ? "dark" : "light";
+  const tileUrl = mapTheme === "dark"
+    ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+    : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
+  const tileAttribution = mapTheme === "dark"
+    ? "&copy; OpenStreetMap contributors &copy; CARTO"
+    : "&copy; OpenStreetMap contributors";
+
+  const filteredOrders = useMemo(() => {
+    if (!orderLocations) return [];
+    return orderLocations.filter(o => !o.pickup_zone || selectedZones.includes(o.pickup_zone));
+  }, [orderLocations, selectedZones]);
+
+  const statusCounts = useMemo(() => {
+    const counts = { pending: 0, offered: 0, assigned: 0, picked_up: 0 };
+    filteredOrders.forEach(o => {
+      if (counts.hasOwnProperty(o.status)) {
+        counts[o.status]++;
+      }
+    });
+    return counts;
+  }, [filteredOrders]);
+
+  const toggleZone = (zoneId) => {
+    setSelectedZones(prev => prev.includes(zoneId)
+      ? prev.filter(z => z !== zoneId)
+      : [...prev, zoneId]);
+  };
+
+  const toggleStatus = (status) => {
+    setVisibleStatuses(prev => prev.includes(status)
+      ? prev.filter(s => s !== status)
+      : [...prev, status]);
+  };
+
+  return (<Card className="overflow-hidden">
+    <CardHeader className="pb-3 border-b">
+      <div className="flex items-center justify-between">
+        <CardTitle className="text-base flex items-center gap-2 font-bold">
+          <MapPin className="w-5 h-5 text-destructive animate-pulse" />
+          Live Fleet Distribution
+        </CardTitle>
+        <div className="flex items-center gap-3">
+          {/* Status Legend */}
+          <div className="flex gap-2 text-xs bg-muted/50 p-1 rounded-lg">
+            {Object.keys(statusCounts).map(status => (
+              <button key={status} onClick={() => toggleStatus(status)} className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-all ${visibleStatuses.includes(status) ? "bg-background shadow-sm ring-1 ring-border" : "opacity-40 hover:opacity-60"}`}>
+                <span className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: statusColors[status] }} />
+                <div className="flex flex-col items-start leading-none gap-0.5">
+                  <span className="text-[10px] uppercase font-bold tracking-tight text-muted-foreground">{status.replace('_', ' ')}</span>
+                  <span className="text-xs font-black">{statusCounts[status]}</span>
                 </div>
-                <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto">
-                  {highDemandZones.map((zone) => (<label key={zone.id} className={`flex items-center gap-1.5 p-1.5 rounded cursor-pointer text-xs transition-colors ${selectedZones.includes(zone.id)
-                ? "bg-accent"
-                : "hover:bg-muted"}`}>
-                      <Checkbox checked={selectedZones.includes(zone.id)} onCheckedChange={() => toggleZone(zone.id)} className="h-3 w-3"/>
-                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: zoneColors[zone.id] }}/>
-                      <span className="truncate">{zone.id}</span>
-                    </label>))}
-                </div>
-              </PopoverContent>
-            </Popover>
+              </button>
+            ))}
           </div>
+
+          {/* Zone Filter */}
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-2 font-medium">
+                <Filter className="h-3.5 w-3.5" />
+                Zones ({selectedZones.length})
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-3" align="end">
+              <div className="flex justify-between items-center mb-3">
+                <span className="text-sm font-bold">Filter Active Zones</span>
+                <div className="flex gap-3">
+                  <button onClick={() => setSelectedZones(zones.map(z => z.id))} className="text-xs text-primary font-bold hover:underline">Select All</button>
+                  <button onClick={() => setSelectedZones([])} className="text-xs text-muted-foreground font-medium hover:underline">Clear</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1">
+                {zones.map((zone) => (<label key={zone.id} className={`flex items-center gap-2 p-2 rounded-lg cursor-pointer text-xs transition-colors ${selectedZones.includes(zone.id) ? "bg-accent" : "hover:bg-muted"}`}>
+                  <Checkbox checked={selectedZones.includes(zone.id)} onCheckedChange={() => toggleZone(zone.id)} />
+                  <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: zone.color }} />
+                  <span className="truncate flex-1 font-medium">{zone.name || zone.id}</span>
+                  <span className="text-muted-foreground font-bold">{zone.pending}</span>
+                </label>))}
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
-        
-        {/* Zone badges */}
-        <div className="flex flex-wrap gap-1.5 mt-2">
-          {highDemandZones.filter(z => selectedZones.includes(z.id)).slice(0, 10).map((zone) => (<Badge key={zone.id} variant="secondary" className="text-white font-medium text-xs cursor-pointer hover:opacity-80" style={{ backgroundColor: zoneColors[zone.id] }} onClick={() => toggleZone(zone.id)}>
-              {zone.id} ({zone.count})
-            </Badge>))}
-          {selectedZones.length > 10 && (<Badge variant="outline" className="text-xs">
-              +{selectedZones.length - 10} more
-            </Badge>)}
-        </div>
-      </CardHeader>
-      
-      <CardContent className="p-0">
-        <div className="h-[420px] w-full relative">
-          <MapContainer center={[25.1500, 55.2500]} zoom={11} scrollWheelZoom={true} className="h-full w-full z-0" style={{ background: "hsl(var(--muted))" }} maxBounds={[[24.85, 54.9], [25.45, 55.6]]} minZoom={10}>
-            <TileLayer key={mapTheme} attribution={tileAttribution} url={tileUrl}/>
-            
-            {/* Clustered order dots */}
-            <ClusterLayer orders={filteredOrders} visibleStatuses={visibleStatuses}/>
-            
-            {/* Zone markers */}
-            {highDemandZones
-            .filter(z => selectedZones.includes(z.id))
-            .map((zone) => (<Marker key={zone.id} position={[zone.lat, zone.lng]} icon={createZoneIcon(zoneColors[zone.id], zone.count)}>
-                  <Popup>
-                    <div className="text-sm">
-                      <p className="font-semibold">Zone {zone.id}</p>
-                      <p className="text-muted-foreground">{zone.area}</p>
-                      <p className="font-medium" style={{ color: zoneColors[zone.id] }}>
-                        {zone.count} orders
+      </div>
+    </CardHeader>
+
+    <CardContent className="p-0">
+      <div className="h-[460px] w-full relative">
+        {(allocationLoading || ordersLoading) && (
+          <div className="absolute inset-0 bg-background/50 backdrop-blur-[1px] z-50 flex items-center justify-center">
+            <div className="flex flex-col items-center gap-2">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              <span className="text-xs font-medium text-muted-foreground">Loading Map Data...</span>
+            </div>
+          </div>
+        )}
+        <MapContainer center={[25.1500, 55.2500]} zoom={11} scrollWheelZoom={true} className="h-full w-full z-0" style={{ background: "hsl(var(--muted))" }} maxBounds={[[24.85, 54.9], [25.45, 55.6]]} minZoom={10}>
+          <TileLayer key={mapTheme} attribution={tileAttribution} url={tileUrl} />
+
+          <ClusterLayer orders={filteredOrders} visibleStatuses={visibleStatuses} />
+
+          {zones.filter(z => selectedZones.includes(z.id)).map((zone) => {
+            const sampleInZone = filteredOrders.find(o => o.pickup_zone === zone.id);
+            const pos = sampleInZone ? [sampleInZone.pickup_latitude, sampleInZone.pickup_longitude] : [zone.lat, zone.lng];
+
+            return (
+              <Marker key={zone.id} position={pos} icon={createZoneIcon(zone.color, zone.pending)}>
+                <Popup>
+                  <div className="text-sm p-1">
+                    <p className="font-bold border-b pb-1 mb-1">{zone.name || 'Zone ' + zone.id}</p>
+                    <div className="space-y-1 mt-1">
+                      <p className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">Pending:</span>
+                        <span className="font-bold text-primary">{zone.pending} orders</span>
+                      </p>
+                      <p className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">Drivers:</span>
+                        <span className="font-bold">{zone.drivers}</span>
+                      </p>
+                      <p className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">Pressure:</span>
+                        <span className={`font-bold ${zone.pressure > 2 ? 'text-destructive' : 'text-success'}`}>{zone.pressure}x</span>
                       </p>
                     </div>
-                  </Popup>
-                </Marker>))}
-            
-            <MapControls />
-          </MapContainer>
-        </div>
-      </CardContent>
-    </Card>);
+                  </div>
+                </Popup>
+              </Marker>
+            );
+          })}
+
+          {driverLocations?.map(driver => (
+            <Marker key={driver.driver_id} position={[driver.latitude, driver.longitude]} icon={L.divIcon({
+              className: 'driver-marker',
+              html: `<div style="background-color: #3b82f6; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid white; box-shadow: 0 0 5px rgba(59,130,246,0.5);"></div>`,
+              iconSize: [8, 8]
+            })}>
+              <Popup>
+                <div className="text-xs font-bold">
+                  {driver.name}
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+
+          <MapControls />
+
+          {/* Map Legend */}
+          <div className="absolute left-3 bottom-8 z-[1000] bg-background/90 backdrop-blur-sm p-2 rounded-lg shadow-lg border border-border text-[10px] space-y-1.5 min-w-[120px]">
+            <p className="font-bold text-muted-foreground uppercase tracking-wider border-b border-border/50 pb-1 mb-1.5">Map Legend</p>
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full bg-primary border border-white shadow-sm" />
+              <span className="font-medium">Active Driver</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-full bg-primary border border-white flex items-center justify-center text-white scale-75">3</div>
+              <span className="font-medium">Order Cluster</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded-full border-2 border-white shadow-md" style={{ backgroundColor: '#ef4444' }} />
+              <span className="font-medium">Zone Center (Pending Counts)</span>
+            </div>
+            <p className="text-[9px] text-muted-foreground pt-1 border-t border-border/50 italic">Clusters expand when zoomed in</p>
+          </div>
+        </MapContainer>
+      </div>
+    </CardContent>
+  </Card>);
 }
 

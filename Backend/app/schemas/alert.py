@@ -4,12 +4,36 @@ from datetime import datetime
 from enum import Enum
 
 class AlertType(str, Enum):
+    # Safety alerts
     FATIGUE = "fatigue"
     HARSH_BRAKING = "harsh_braking"
     HARSH_ACCELERATION = "harsh_acceleration"
     UNUSUAL_MOVEMENT = "unusual_movement"
     ACCIDENT = "accident"
     SPEEDING = "speeding"
+    DEVICE = "device"
+    
+    # Zone alerts
+    ZONE_CHANGE = "zone_change"
+    ZONE_ASSIGNED = "zone_assigned"
+    ZONE_BOUNDARY = "zone_boundary"
+    
+    # Order alerts
+    ORDER_ASSIGNED = "order_assigned"
+    ORDER_CANCELLED = "order_cancelled"
+    ORDER_UPDATED = "order_updated"
+    ORDER_COMPLETED = "order_completed"
+    
+    # Break/rest alerts
+    BREAK_REMINDER = "break_reminder"
+    SHIFT_START = "shift_start"
+    SHIFT_END = "shift_end"
+    REST_REQUIRED = "rest_required"
+    
+    # System alerts
+    SYSTEM = "system"
+    ADMIN_ANNOUNCEMENT = "admin_announcement"
+
 
 class AlertSeverity(int, Enum):
     LOW = 1
@@ -27,6 +51,7 @@ class AlertCreate(BaseModel):
 class AlertResponse(BaseModel):
     alert_id: str
     driver_id: str
+    driver_name: Optional[str] = None
     alert_type: str
     severity: int
     latitude: Optional[float] = None

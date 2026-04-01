@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertTriangle, AlertCircle, Activity, Battery, Camera, CheckCircle, Clock, CloudRain, Download, Eye, MapPin, Navigation, Package, Search, TrendingUp, Wifi, } from "lucide-react";
+import { AlertTriangle, AlertCircle, Activity, Battery, Camera, CheckCircle, Clock, CloudRain, Download, Eye, MapPin, Navigation, Package, Search, TrendingUp, Wifi, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DriverChatDialog } from "@/components/shared/DriverChatDialog";
-import { useDrivers, useSafetyAlerts, usePolling, useDriverPerformanceStats } from "@/utils/hooks/use-api";
+import { useDrivers, useSafetyAlerts, usePolling, useDriverPerformanceStats, useDriverInsights } from "@/utils/hooks/use-api";
 import { safetyService } from "@/utils/services/safety.service";
 import { formatDistanceToNow } from "date-fns";
 const severityOrder = {
@@ -23,36 +23,39 @@ const severityBorderColor = {
   medium: "#eab308",
   low: "#3b82f6",
 };
+const alertTypeToTab = {
+  fatigue: "fatigue",
+  accident: "accident",
+  unusual_movement: "fall",
+  speeding: "speeding",
+  device: "device",
+  environmental: "environmental",
+  harsh_braking: "behavior",
+  harsh_acceleration: "behavior"
+}
 const tabActiveClasses = {
   all: "data-[state=active]:bg-slate-900 data-[state=active]:text-white",
   fatigue: "data-[state=active]:bg-red-600 data-[state=active]:text-white",
   accident: "data-[state=active]:bg-amber-600 data-[state=active]:text-white",
   fall: "data-[state=active]:bg-purple-600 data-[state=active]:text-white",
   speeding: "data-[state=active]:bg-blue-600 data-[state=active]:text-white",
-  device: "data-[state=active]:bg-indigo-600 data-[state=active]:text-white",
-  environmental: "data-[state=active]:bg-emerald-600 data-[state=active]:text-white",
+  behavior: "data-[state=active]:bg-indigo-600 data-[state=active]:text-white",
+  device: "data-[state=active]:bg-emerald-600 data-[state=active]:text-white",
+  environmental: "data-[state=active]:bg-orange-600 data-[state=active]:text-white",
 };
 const parseMinutesAgo = (timestamp) => {
-  const match = timestamp.match(/(\d+)/);
-  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+  const date = new Date(timestamp);
+  return (new Date() - date) / 1000 / 60;
 };
 const getAlertIcon = (type) => {
-  switch (type) {
-    case "fatigue":
-      return <Activity className="w-5 h-5" />;
-    case "accident":
-      return <AlertCircle className="w-5 h-5" />;
-    case "fall":
-      return <AlertTriangle className="w-5 h-5" />;
-    case "speeding":
-      return <TrendingUp className="w-5 h-5" />;
-    case "device":
-      return <Camera className="w-5 h-5" />;
-    case "environmental":
-      return <CloudRain className="w-5 h-5" />;
-    default:
-      return <AlertTriangle className="w-5 h-5" />;
-  }
+  if (type.includes("fatigue")) return <Activity className="w-5 h-5" />;
+  if (type.includes("accident")) return <AlertCircle className="w-5 h-5" />;
+  if (type.includes("unusual") || type.includes("fall")) return <AlertTriangle className="w-5 h-5" />;
+  if (type.includes("speeding")) return <TrendingUp className="w-5 h-5" />;
+  if (type.includes("harsh")) return <Zap className="w-5 h-5" />;
+  if (type.includes("device")) return <Camera className="w-5 h-5" />;
+  if (type.includes("environmental")) return <CloudRain className="w-5 h-5" />;
+  return <AlertTriangle className="w-5 h-5" />;
 };
 const getSeverityColor = (severity) => {
   switch (severity) {
@@ -122,7 +125,7 @@ export function SafetyAlerts() {
   // Fetch Alerts
   const { data: alertsData, refetch: refetchAlerts } = useSafetyAlerts(
     undefined,
-    activeTab === "all" ? undefined : activeTab,
+    activeTab === "all" || activeTab === "behavior" || activeTab === "fall" ? undefined : activeTab,
     undefined,
     0,
     100
@@ -133,54 +136,71 @@ export function SafetyAlerts() {
   const alerts = useMemo(() => {
     return (alertsData || []).map(a => {
       const driver = driversMap[a.driver_id];
+      const severityMap = { 4: "critical", 3: "high", 2: "medium", 1: "low" };
+      const severityStr = severityMap[a.severity] || "low";
       return {
         id: a.alert_id,
         type: a.alert_type,
         title: a.alert_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        driver: driver?.name || "Unknown Driver",
+        driver: driver?.name || a.driver_name || "Unknown Driver",
         driverId: a.driver_id,
-        description: `${a.alert_type.replace(/_/g, ' ')} detected at ${new Date(a.timestamp).toLocaleTimeString()}`,
-        location: driver?.current_zone || "Unknown",
-        severity: a.severity === 4 ? "critical" : a.severity === 3 ? "high" : a.severity === 2 ? "medium" : "low",
-        timestamp: formatDistanceToNow(new Date(a.timestamp)) + " ago",
+        description: `${a.alert_type.replace(/_/g, ' ')} detected.`,
+        location: driver?.current_zone || "Unknown Zone",
+        severity: severityStr,
+        timestampRaw: a.timestamp,
+        timestamp: new Date(`${a.timestamp}Z`.replace('ZZ', 'Z')).toLocaleString(),
         status: a.acknowledged ? "acknowledged" : "active",
+        category: alertTypeToTab[a.alert_type] || "other"
       };
     });
   }, [alertsData, driversMap]);
 
-  // Fetch stats for selected driver
   const { data: selectedDriverStats } = useDriverPerformanceStats(selectedDriverId);
+  const { data: aiInsights, loading: isAiLoading } = useDriverInsights(selectedDriverId);
   const selectedDriver = selectedDriverId ? driversMap[selectedDriverId] : null;
+
   const filteredAlerts = useMemo(() => {
     const matches = alerts.filter((alert) => {
-      const matchesTab = activeTab === "all" || alert.type === activeTab;
+      let matchesTab = activeTab === "all";
+      if (!matchesTab) {
+        if (activeTab === "behavior") {
+          matchesTab = alert.type.includes("harsh");
+        } else if (activeTab === "fall") {
+          matchesTab = alert.type === "unusual_movement" || alert.type === "fall";
+        } else {
+          matchesTab = alert.type === activeTab;
+        }
+      }
+
       const matchesSearch = alert.driver.toLowerCase().includes(searchQuery.toLowerCase()) ||
         alert.driverId.toLowerCase().includes(searchQuery.toLowerCase()) ||
         alert.title.toLowerCase().includes(searchQuery.toLowerCase());
+
       const matchesSeverity = severityFilter === "all" || alert.severity === severityFilter;
       return matchesTab && matchesSearch && matchesSeverity;
     });
+
     const sorted = [...matches];
     if (sortBy === "severity") {
       sorted.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
     }
     else if (sortBy === "time") {
-      sorted.sort((a, b) => parseMinutesAgo(a.timestamp) - parseMinutesAgo(b.timestamp));
-    }
-    else {
-      sorted.sort((a, b) => a.title.localeCompare(b.title));
+      sorted.sort((a, b) => new Date(b.timestampRaw) - new Date(a.timestampRaw));
     }
     return sorted;
   }, [activeTab, alerts, searchQuery, severityFilter, sortBy]);
+
   const alertCounts = useMemo(() => ({
     all: alerts.length,
     fatigue: alerts.filter((a) => a.type === "fatigue").length,
     accident: alerts.filter((a) => a.type === "accident").length,
-    fall: alerts.filter((a) => a.type === "fall").length,
+    fall: alerts.filter((a) => a.type === "unusual_movement" || a.type === "fall").length,
     speeding: alerts.filter((a) => a.type === "speeding").length,
+    behavior: alerts.filter((a) => a.type.includes("harsh")).length,
     device: alerts.filter((a) => a.type === "device").length,
     environmental: alerts.filter((a) => a.type === "environmental").length,
   }), [alerts]);
+
   const criticalCount = useMemo(() => alerts.filter((a) => a.severity === "critical" && a.status === "active").length, [alerts]);
   const openChatForAlert = (alert) => {
     setChatTarget({
@@ -373,7 +393,7 @@ export function SafetyAlerts() {
     </Card>
 
     {/* Driver Details Dialog */}
-    <Dialog open={selectedDriver !== null} onOpenChange={() => setSelectedDriver(null)}>
+    <Dialog open={selectedDriver !== null} onOpenChange={() => setSelectedDriverId(null)}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Driver Profile: {selectedDriver?.name}</DialogTitle>
@@ -384,7 +404,7 @@ export function SafetyAlerts() {
           {/* Driver Info Header */}
           <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
             <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center text-white text-xl">
-              {selectedDriver.photo}
+              {selectedDriver.name ? selectedDriver.name.charAt(0) : "D"}
             </div>
             <div className="flex-1">
               <h3 className="text-foreground">{selectedDriver.name}</h3>
@@ -393,8 +413,8 @@ export function SafetyAlerts() {
                 <Badge className={getStatusBadge(selectedDriver.status)}>
                   {selectedDriver.status.replace("_", " ").toUpperCase()}
                 </Badge>
-                <Badge className={getFatigueBadge(selectedDriver.fatigue_score > 7 ? 'severe' : selectedDriver.fatigue_score > 4 ? 'warning' : 'normal')}>
-                  Fatigue: {selectedDriver.fatigue_score > 7 ? 'SEVERE' : selectedDriver.fatigue_score > 4 ? 'WARNING' : 'NORMAL'}
+                <Badge className={getFatigueBadge(selectedDriver.fatigue_score >= 0.8 ? 'severe' : selectedDriver.fatigue_score >= 0.65 ? 'warning' : 'normal')}>
+                  Fatigue: {selectedDriver.fatigue_score >= 0.8 ? 'SEVERE' : selectedDriver.fatigue_score >= 0.65 ? 'WARNING' : 'NORMAL'}
                 </Badge>
               </div>
             </div>
@@ -416,7 +436,7 @@ export function SafetyAlerts() {
               <div className="text-center">
                 <MapPin className="w-12 h-12 text-blue-600 mx-auto mb-2" />
                 <p className="text-muted-foreground">Current Location: {selectedDriver.current_zone || "Unknown"}</p>
-                <p className="text-muted-foreground">Speed: 0 km/h {/* Hardcoded: Speed Data */}</p>
+                <p className="text-muted-foreground">Speed: {Math.max(0, selectedDriver.current_speed || 0).toFixed(1)} km/h</p>
               </div>
             </div>
           </Card>
@@ -461,42 +481,49 @@ export function SafetyAlerts() {
                 <Battery className="w-5 h-5 text-green-600" />
                 <div>
                   <p className="text-muted-foreground">Battery</p>
-                  <p className="text-foreground">85% {/* Hardcoded: Battery Data */}</p>
+                  <p className="text-foreground">{selectedDriver.battery_level || 100}%</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
                 <Wifi className="w-5 h-5 text-blue-600" />
                 <div>
                   <p className="text-muted-foreground">Network</p>
-                  <p className="text-foreground">4G Strong {/* Hardcoded: Network Data */}</p>
+                  <p className="text-foreground">{selectedDriver.network_strength || "Strong"}</p>
                 </div>
               </div>
               <div className="flex items-center gap-3">
                 <Camera className="w-5 h-5 text-green-600" />
                 <div>
                   <p className="text-muted-foreground">Camera</p>
-                  <p className="text-foreground">Active {/* Hardcoded: Camera Data */}</p>
+                  <p className="text-foreground">{selectedDriver.camera_active ? "Recording" : "Inactive"}</p>
                 </div>
               </div>
             </div>
           </Card>
 
           {/* AI Recommendations */}
-          <Card className="p-4 bg-blue-500/10 dark:bg-blue-900/20 border-blue-500/20">
+          <Card className="p-4 bg-primary/10 border-primary/20">
             <h4 className="text-foreground mb-3 flex items-center gap-2">
-              <Activity className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <Activity className="w-4 h-4 text-primary" />
               AI-Generated Recommendations
             </h4>
             <div className="space-y-2">
-              {selectedDriver.fatigue_score > 7 && (<div className="p-3 bg-card rounded border border-red-500/20">
-                <p className="text-red-700 dark:text-red-400">⚠️ Driver has shown critical fatigue levels. Recommend immediate 20-minute break.</p>
-              </div>)}
-              {selectedDriver.fatigue_score > 4 && selectedDriver.fatigue_score <= 7 && (<div className="p-3 bg-card rounded border border-orange-500/20">
-                <p className="text-orange-700 dark:text-orange-400">⚠️ Driver has shown increased fatigue in the past hour. Recommend a 10-minute break.</p>
-              </div>)}
-              <div className="p-3 bg-card rounded border border-blue-500/20">
-                <p className="text-blue-700 dark:text-blue-400">💡 Suggested: Monitor driver speed in next zone.</p>
-              </div>
+              {isAiLoading ? (
+                <p className="text-xs text-muted-foreground animate-pulse">Consulting GenAI advisor...</p>
+              ) : aiInsights?.insights && aiInsights.insights.length > 0 ? (
+                aiInsights.insights.map((insight, idx) => (
+                  <div key={idx} className="p-3 bg-card rounded border border-primary/20">
+                    <p className="text-primary text-sm flex items-start gap-2">
+                      <span className="mt-1">💡</span>
+                      {insight}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <div className="p-3 bg-card rounded border border-muted">
+                  <p className="text-muted-foreground text-sm">No critical performance issues detected by AI.</p>
+                </div>
+              )}
             </div>
           </Card>
 
@@ -509,8 +536,8 @@ export function SafetyAlerts() {
                 <Badge variant="secondary">{selectedDriverStats?.today_safety_alerts ?? 0}</Badge>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
-                <span className="text-muted-foreground">Fatigue Score (Avg)</span>
-                <Badge variant="secondary">{selectedDriverStats?.average_fatigue_score?.toFixed(1) ?? "0.0"}</Badge>
+                <span className="text-muted-foreground">Fatigue Score</span>
+                <Badge variant="secondary">{((selectedDriverStats?.current_fatigue_score ?? 0) * 100).toFixed(0)}/100</Badge>
               </div>
               <div className="flex items-center justify-between p-3 bg-muted rounded">
                 <span className="text-muted-foreground">Total Orders (Lifetime)</span>
