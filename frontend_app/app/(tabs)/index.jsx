@@ -64,7 +64,7 @@ export default function HomeScreen() {
     return zoneId
       .replace(/^zone_/, "")
       .split("_")
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+      .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
       .join(" ");
   };
 
@@ -82,6 +82,12 @@ export default function HomeScreen() {
   const shiftType = driverProfile?.shift_type || DEFAULT_SHIFT.type;
   const shiftStartTime = formatTime(driverProfile?.shift_start_time) || formatTime(DEFAULT_SHIFT.start);
   const shiftEndTime = formatTime(driverProfile?.shift_end_time) || formatTime(DEFAULT_SHIFT.end);
+  
+  const getDemandBadgeProps = (score = 0) => {
+    if (score >= 0.7) return { status: "high", label: "high demand" };
+    if (score >= 0.3) return { status: "medium", label: "normal demand" };
+    return { status: "low", label: "low demand" };
+  };
 
   const { newZone: reassignedZoneId } = useAllocationNotification();
 
@@ -215,13 +221,10 @@ export default function HomeScreen() {
             </View>
             <View style={styles.zoneContent}>
               <View style={styles.zoneInfo}>
-                <Text style={styles.zoneCode}>{currentZoneCode.replace(/^zone_/, "").toUpperCase()}</Text>
-                <Text style={styles.zoneDescription}>
-                  {currentZoneName}
-                </Text>
-                <StatusBadge
-                  status="low"
-                  label="low demand"
+                <Text style={styles.zoneTitleCombined}>Zone {currentZoneName}</Text>
+                <StatusBadge 
+                  {...getDemandBadgeProps(driverProfile?.current_zone_demand)}
+                  style={styles.demandBadge}
                 />
               </View>
               <View style={styles.mapPreview}>
@@ -453,17 +456,16 @@ const styles = StyleSheet.create({
   },
   zoneInfo: {
     flex: 1,
+    justifyContent: 'center',
   },
-  zoneCode: {
-    fontSize: theme.fontSize.xxxl,
+  zoneTitleCombined: {
+    fontSize: theme.fontSize.xl,
     fontWeight: "700",
     color: theme.colors.primary,
-    marginBottom: theme.spacing.xs,
-  },
-  zoneDescription: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.textSecondary,
     marginBottom: theme.spacing.sm,
+  },
+  demandBadge: {
+    marginTop: theme.spacing.xs,
   },
   mapPreview: {
     width: 100,

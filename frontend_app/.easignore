@@ -1,0 +1,54 @@
+# Dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Native build folders
+android/
+ios/
+
+# Git
+.git/
+
+# Environment files (EAS loads these from the server)
+.env
+.env.*
+.env.local
+.env.production
+
+# Logs
+*.log
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Kotlin
+.kotlin/
+
+# Metro
+.metro-health-check*
+
+# Credentials
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.pem
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Test / config files not needed for build
+*.orig.*

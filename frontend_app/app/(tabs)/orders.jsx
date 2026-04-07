@@ -89,13 +89,10 @@ export default function OrdersScreen() {
           <View style={styles.header}>
             <Text style={styles.headerTitle}>My Orders</Text>
             <View style={styles.headerIcons}>
-              <TouchableOpacity style={styles.iconButton}>
-                <Search color="#FFFFFF" size={20} />
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.iconButton}>
+              <TouchableOpacity style={styles.iconButton} onPress={() => router.push("/(tabs)/alerts")}>
                 <Bell color="#FFFFFF" size={20} />
               </TouchableOpacity>
-              <TouchableOpacity style={styles.iconButton}>
+              <TouchableOpacity style={styles.iconButton} onPress={() => router.push("/(tabs)/settings")}>
                 <User color="#FFFFFF" size={20} />
               </TouchableOpacity>
             </View>
@@ -532,7 +529,8 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 8,
+    marginTop: 12,
+    gap: 12,
   },
   moreInfoLink: {
     fontSize: 14,
@@ -547,13 +545,13 @@ const styles = StyleSheet.create({
   },
   completeDeliveryButton: {
     backgroundColor: "#2563EB",
-    paddingHorizontal: 20,
+    paddingHorizontal: 15,
     paddingVertical: 10,
     borderRadius: 12,
   },
   pendingActions: {
     flexDirection: "row",
-    gap: 8,
+    gap: 12,
   },
   acceptButton: {
     backgroundColor: "#10B981",
@@ -604,7 +602,7 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   actionButtonText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: "600",
     color: "#FFFFFF",
   },

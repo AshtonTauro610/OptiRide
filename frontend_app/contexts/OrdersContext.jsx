@@ -79,6 +79,7 @@ export const [OrdersProvider, useOrders] = createContextHook(() => {
     isRefetchingOrders: isRefetching,
     ordersError: error,
     refetchOrders: refetch,
+    invalidateOrders,
     isAuthenticated,
     completeDelivery,
     confirmPickup,

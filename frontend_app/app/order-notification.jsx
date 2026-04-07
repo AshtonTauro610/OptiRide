@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Platform, Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
@@ -26,7 +26,7 @@ export default function OrderNotificationScreen() {
   const params = useLocalSearchParams();
   const { token } = useAuth();
   const { currentOffer, clearCurrentOffer, syncOffers } = useOrderNotification();
-  const { orders, refetchOrders } = useOrders();
+  const { orders, invalidateOrders } = useOrders();
 
   const [driverLocation, setDriverLocation] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -96,11 +96,12 @@ export default function OrderNotificationScreen() {
     try {
       await acceptOrder(token, order.order_id);
       // Refresh orders list so the new order appears
-      await refetchOrders();
+      await invalidateOrders();
       clearCurrentOffer();
+      
       const otherOngoingOrders = orders.filter(o =>
         o.id !== order.order_id &&
-        (o.status === "assigned" || o.status === "picked_up")
+        o.status === "assigned" // Both assigned and picked_up map to "assigned"
       );
 
       if (otherOngoingOrders.length > 0) {
@@ -115,6 +116,9 @@ export default function OrderNotificationScreen() {
     } catch (error) {
       console.error('Failed to accept order:', error);
       setIsAccepting(false);
+      
+      const message = error?.details?.detail || error?.message || "Order may have been taken by another driver.";
+      Alert.alert("Cannot Accept Order", message);
     }
   };
 
@@ -126,24 +130,20 @@ export default function OrderNotificationScreen() {
       await rejectOrder(token, order.order_id);
       clearCurrentOffer();
       // Refresh orders and navigate to orders tab
-      await refetchOrders();
+      await invalidateOrders();
       router.replace('/(tabs)/orders');
     } catch (error) {
       console.error('Failed to reject order:', error);
       setIsRejecting(false);
+      Alert.alert("Cannot Reject Order", "Something went wrong. Please try again.");
     }
   };
 
-  // Handle back navigation (swipe down) - order stays as offered/pending
   useEffect(() => {
-    // If component unmounts without accepting/rejecting, order stays in offered status
     return () => {
-      // Clear the local offer so it doesn't re-navigate, but don't reject the order
-      // Order will remain in offered status and show in pending tab
     };
   }, []);
 
-  // If no order, show loading or redirect
   if (!order) {
     return (
       <View style={[styles.container, styles.centered]}>

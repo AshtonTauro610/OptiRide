@@ -8,6 +8,7 @@ import {
   Switch,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -59,7 +60,11 @@ export default function LoginScreen() {
           <Text style={styles.subtitle}>Sign in to your account</Text>
 
           <View style={styles.iconPlaceholder}>
-            <Text style={styles.iconText}>@</Text>
+            <Image
+              source={require('@/assets/images/optiride.png')}
+              style={styles.logoImage}
+              resizeMode="contain"
+            />
           </View>
 
           <View style={styles.form}>
@@ -92,21 +97,6 @@ export default function LoginScreen() {
                   secureTextEntry
                 />
               </View>
-            </View>
-
-            <View style={styles.rememberRow}>
-              <View style={styles.rememberContent}>
-                <Switch
-                  value={rememberMe}
-                  onValueChange={setRememberMe}
-                  trackColor={{ false: '#d1d5db', true: theme.colors.primary }}
-                  thumbColor="#ffffff"
-                />
-                <Text style={styles.rememberText}>Remember me</Text>
-              </View>
-              <TouchableOpacity>
-                <Text style={styles.forgotLink}>Forgot Password?</Text>
-              </TouchableOpacity>
             </View>
 
             <TouchableOpacity
@@ -184,18 +174,17 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.xl,
   },
   iconPlaceholder: {
-    width: 80,
-    height: 80,
+    width: 100,
+    height: 100,
     borderRadius: 40,
-    backgroundColor: '#f3f4f6',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: theme.spacing.xl,
+    marginBottom: theme.spacing.sm,
+    overflow: 'hidden',
   },
-  iconText: {
-    fontSize: 48,
-    fontWeight: '700',
-    color: '#6b7280',
+  logoImage: {
+    width: '100%',
+    height: '100%',
   },
   form: {
     width: '100%',
@@ -248,6 +237,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   signInButton: {
+    marginTop: theme.spacing.xl,
     backgroundColor: '#000000',
     paddingVertical: theme.spacing.md + 2,
     borderRadius: theme.borderRadius.md,
