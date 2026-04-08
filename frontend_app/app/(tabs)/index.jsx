@@ -93,7 +93,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     loadData();
-  }, [token]);
+  }, [token, reassignedZoneId]);
 
   const loadData = async () => {
     if (!token) {

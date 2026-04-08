@@ -42,7 +42,36 @@ export function mapApiOrderToOrder(order) {
     restaurant: order.restaurant_name,
     restaurantLogo: undefined,
     location: order.pickup_address,
-    estimatedTime: order.estimated_pickup_time || order.estimated_dropoff_time || undefined,
+    estimatedTime: (() => {
+      const timeStr = order.pickup_time || order.dropoff_time;
+      if (!timeStr) return "TBD";
+
+      try {
+        // 1. Ensure the string is treated as UTC (Z suffix)
+        const normalizedTime = timeStr.endsWith('Z') ? timeStr : `${timeStr}Z`;
+        const date = new Date(normalizedTime);
+        const now = new Date();
+
+        // 2. Calculation (Now both are in the same reference frame)
+        const diffMs = date.getTime() - now.getTime();
+        const diffMin = Math.round(diffMs / 60000);
+
+        // 3. Display Logic
+        if (diffMin > 0 && diffMin < 60) {
+          return `${diffMin} mins`;
+        }
+        
+        // 4. toLocaleTimeString automatically converts to the user's system timezone
+        return date.toLocaleTimeString([], { 
+          hour: '2-digit', 
+          minute: '2-digit', 
+          hour12: false 
+        });
+      } catch (e) {
+        console.error("Time calc error:", e);
+        return "TBD";
+      }
+    })(),
     status: mapping.status,
     statusBadge: mapping.statusBadge,
     actionType: mapping.actionType,

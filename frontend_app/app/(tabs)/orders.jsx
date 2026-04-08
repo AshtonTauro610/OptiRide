@@ -181,7 +181,7 @@ export default function OrdersScreen() {
                     {order.status === "completed"
                       ? "Delivered To:"
                       : "Est. " + (order.actionType === "pickup" ? "Pickup" : "Delivery") + ":"}{" "}
-                    {order.details.customerName}
+                    {order.status === "completed" ? order.details.customerName : order.estimatedTime}
                   </Text>
                   {order.status === "completed" && order.details.deliveryTime && (
                     <Text style={[styles.estimatedTime, { color: subTextColor }]}>Delivery Time: {order.details.deliveryTime}</Text>
