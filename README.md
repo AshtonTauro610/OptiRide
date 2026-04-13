@@ -11,6 +11,17 @@ The project consists of three main components:
 
 ---
 
+## Links
+
+1.  **Informational Website**: [info.optiride.app](https://info.optiride.app)
+2.  **Admin Dashboard**: [admin.optiride.app](https://admin.optiride.app)
+3.  **Mobile App**: [![Android Download](https://img.shields.io/badge/Download-APK-green?logo=android&style=for-the-badge)](https://github.com/sadreammm/optiride/releases/latest)
+4.  **YouTube**: [Demo Video](https://youtu.be/iRk6zZUTvhk)
+5.  **Presentation**: [Solution Presentation](https://optiride.my.canva.site/)
+6.  
+
+---
+
 ## 🛠️ Prerequisites
 
 Before you begin, ensure you have the following installed:
