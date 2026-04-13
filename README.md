@@ -39,6 +39,14 @@ If you prefer to use the system directly without a local setup, you can access t
 - **💻 Admin Dashboard**: [admin.optiride.app](https://admin.optiride.app)
 - **📱 Driver Mobile App**: [![Android Download](https://img.shields.io/badge/Download-APK-green?logo=android&style=for-the-badge)](https://github.com/sadreammm/optiride/releases/latest)
 
+Test Credentials:
+- **Admin User**:
+     - Username: test_admin@optiride.com
+     - Password: Optiride_test_admin1
+- **Driver User**:
+     - Username: test_driver@optiride.com
+     - Password: Optiride_test_driver1
+
 ### 📥 How to Install the Mobile App
 1. Download the `OptiRide.apk` from the link above.
 2. Open the file on your Android device.
