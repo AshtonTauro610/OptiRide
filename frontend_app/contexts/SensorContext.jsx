@@ -26,7 +26,8 @@ const LOCATION_INTERVAL = 5000;      // ms - GPS update interval
 const TELEMETRY_INTERVAL = 10000;    // ms - how often to send location to dispatcher when online
 const DEVICE_STATS_INTERVAL = 60000; // ms - how often to send battery/network stats
 
-const SensorContext = createContext(null);
+const SensorStatusContext = createContext(null);
+const SensorDataContext = createContext(null);
 
 export function SensorProvider({ children }) {
     const { token, user } = useAuth();
@@ -58,11 +59,13 @@ export function SensorProvider({ children }) {
         };
     }, [router]);
 
-    // Real-time sensor values
+    // Real-time sensor values (UI only needs speed and location occasionally)
     const [currentSpeed, setCurrentSpeed] = useState(0);
-    const [accelerometerData, setAccelerometerData] = useState({ x: 0, y: 0, z: 0 });
-    const [gyroscopeData, setGyroscopeData] = useState({ x: 0, y: 0, z: 0 });
     const [locationData, setLocationData] = useState(null);
+
+    // Raw sensor data is kept in refs to avoid triggering global re-renders every 100ms
+    const accelerometerDataRef = useRef({ x: 0, y: 0, z: 0 });
+    const gyroscopeDataRef = useRef({ x: 0, y: 0, z: 0 });
 
     // Device telemetry
     const [batteryLevel, setBatteryLevel] = useState(100);
@@ -98,6 +101,22 @@ export function SensorProvider({ children }) {
     const [breakStartTime, setBreakStartTime] = useState(null);
     const [breakDuration, setBreakDuration] = useState(0);
     const breakIntervalRef = useRef(null);
+    
+    // Throttled alert state management
+    const lastAlertRef = useRef(null);
+    const flushAlertTimeoutRef = useRef(null);
+    const triggerAlert = useCallback((newAlert) => {
+        // Always update the ref immediately
+        lastAlertRef.current = newAlert;
+        
+        // Only flush to state if not already scheduled (approx 1s debounce)
+        if (!flushAlertTimeoutRef.current) {
+            flushAlertTimeoutRef.current = setTimeout(() => {
+                setLastAlert(lastAlertRef.current);
+                flushAlertTimeoutRef.current = null;
+            }, 1000);
+        }
+    }, []);
 
     // Auto-online on login: start shift if driver is offline
     const hasAutoStarted = useRef(false);
@@ -180,26 +199,30 @@ export function SensorProvider({ children }) {
         const netAcceleration = Math.abs(magnitude - 9.8);
 
         if (netAcceleration > THRESHOLDS.SUDDEN_IMPACT) {
-            setLastAlert({ type: "CRASH_DETECTED", severity: "critical", timestamp: new Date() });
+            triggerAlert({ type: "CRASH_DETECTED", severity: "critical", timestamp: new Date() });
         } else if (netAcceleration > THRESHOLDS.HARSH_BRAKING) {
-            setLastAlert({ type: "HARSH_BRAKING", severity: "warning", timestamp: new Date() });
+            triggerAlert({ type: "HARSH_BRAKING", severity: "warning", timestamp: new Date() });
         } else if (netAcceleration > THRESHOLDS.HARSH_ACCELERATION) {
-            setLastAlert({ type: "HARSH_ACCELERATION", severity: "warning", timestamp: new Date() });
+            triggerAlert({ type: "HARSH_ACCELERATION", severity: "warning", timestamp: new Date() });
         }
 
         return { ...data, magnitude, netAcceleration };
-    }, []);
+    }, [triggerAlert]);
 
     // Analyze gyroscope for sharp turns
     const analyzeGyroscope = useCallback((data) => {
         const angularVelocity = calculateMagnitude(data.x, data.y, data.z);
 
         if (angularVelocity > THRESHOLDS.SHARP_TURN) {
-            setLastAlert({ type: "SHARP_TURN", severity: "warning", timestamp: new Date() });
+            triggerAlert({ type: "SHARP_TURN", severity: "warning", timestamp: new Date() });
         }
 
         return { ...data, angularVelocity };
-    }, []);
+    }, [triggerAlert]);
+
+    // Stabilize references for intervals using refs
+    const sendSensorBatchRef = useRef(null);
+    const startMonitoringRef = useRef(null);
 
     // Send device health telemetry (Battery, Network, Camera)
     const sendDeviceTelemetry = useCallback(async () => {
@@ -293,7 +316,7 @@ export function SensorProvider({ children }) {
                     locationDataRef.current = newLoc;
 
                     if (speedKmh > THRESHOLDS.SPEED_LIMIT) {
-                        setLastAlert({ type: "OVER_SPEED", severity: "warning", speed: speedKmh, timestamp: new Date() });
+                        triggerAlert({ type: "OVER_SPEED", severity: "warning", speed: speedKmh, timestamp: new Date() });
                     }
                 }
             );
@@ -389,7 +412,7 @@ export function SensorProvider({ children }) {
             if (accelAvailable) {
                 accelerometerSubscription.current = Accelerometer.addListener((data) => {
                     const analyzed = analyzeAccelerometer(data);
-                    setAccelerometerData(analyzed);
+                    accelerometerDataRef.current = analyzed;
                     accelerometerBuffer.current.push({
                         x: data.x,
                         y: data.y,
@@ -407,7 +430,7 @@ export function SensorProvider({ children }) {
             if (gyroAvailable) {
                 gyroscopeSubscription.current = Gyroscope.addListener((data) => {
                     const analyzed = analyzeGyroscope(data);
-                    setGyroscopeData(analyzed);
+                    gyroscopeDataRef.current = analyzed;
                     gyroscopeBuffer.current.push({
                         x: data.x,
                         y: data.y,
@@ -421,10 +444,10 @@ export function SensorProvider({ children }) {
                 console.log("Gyroscope subscription created");
             }
 
-            // Start batch sending interval
+            // Start batch sending interval - use a wrapper to ensure we always see the latest sendSensorBatch logic
             batchIntervalRef.current = setInterval(() => {
-                if (typeof sendSensorBatch === 'function') {
-                    sendSensorBatch(newSessionId);
+                if (sendSensorBatchRef.current) {
+                    sendSensorBatchRef.current(newSessionId);
                 }
             }, BATCH_SEND_INTERVAL);
 
@@ -470,29 +493,31 @@ export function SensorProvider({ children }) {
 
     // Toggle duty status
     const toggleOnline = useCallback(async () => {
-        if (!token) return;
+        const currentToken = tokenRef.current;
+        const currentLoc = locationDataRef.current;
+        if (!currentToken) return;
 
         try {
             if (isOnline) {
                 // End Shift - go offline
-                await endShift(token, {
+                await endShift(currentToken, {
                     end_time: new Date().toISOString(),
-                    end_latitude: locationData?.latitude || 0,
-                    end_longitude: locationData?.longitude || 0
+                    end_latitude: currentLoc?.latitude || 0,
+                    end_longitude: currentLoc?.longitude || 0
                 });
                 // Also update driver status explicitly
-                await updateDriverStatus(token, "offline");
+                await updateDriverStatus(currentToken, "offline");
                 setIsOnline(false);
                 console.log("Shift ended (Go Off-Duty)");
             } else {
                 // Start Shift - go online
-                await startShift(token, {
+                await startShift(currentToken, {
                     start_time: new Date().toISOString(),
-                    start_latitude: locationData?.latitude || 0,
-                    start_longitude: locationData?.longitude || 0
+                    start_latitude: currentLoc?.latitude || 0,
+                    start_longitude: currentLoc?.longitude || 0
                 });
                 // Also update driver status explicitly
-                await updateDriverStatus(token, "available");
+                await updateDriverStatus(currentToken, "available");
                 setIsOnline(true);
                 console.log("Shift started (Go On-Duty)");
             }
@@ -501,13 +526,13 @@ export function SensorProvider({ children }) {
             // Fallback to basic status update if shift endpoints fail
             try {
                 const newStatus = isOnline ? "offline" : "available";
-                await updateDriverStatus(token, newStatus);
+                await updateDriverStatus(currentToken, newStatus);
                 setIsOnline(!isOnline);
             } catch (innerError) {
                 console.error("Critical failure updating status:", innerError?.message || "Unknown error");
             }
         }
-    }, [token, isOnline, locationData]);
+    }, [isOnline]); // Only depends on isOnline state
 
     // Break management functions
     const startBreak = useCallback(async () => {
@@ -601,7 +626,7 @@ export function SensorProvider({ children }) {
             const crashAction = result?.crash_action || "LOG/OBSERVE";
             const fallAction = result?.fall_action || "LOG/OBSERVE";
 
-            setRiskPrediction({
+            const newPrediction = {
                 crashProbability,
                 crashAction,
                 crashFuzzy: result?.crash_fuzzy ?? 0,
@@ -612,15 +637,20 @@ export function SensorProvider({ children }) {
                 fatigueScore: result?.fatigue_score ?? null,
                 recommendation: result?.recommendation || null,
                 timestamp: new Date(),
-            });
+            };
 
+            // Only update score if it changed meaningfully (more than 1 point)
             if (result.fatigue_score !== null) {
-                const newScore = Math.max(0, 100 - (result.fatigue_score * 100));
-                setSafetyScore(Math.round(newScore));
+                const newScore = Math.round(Math.max(0, 100 - (result.fatigue_score * 100)));
+                setSafetyScore(prev => Math.abs(prev - newScore) > 1 ? newScore : prev);
             }
 
+            // Always update risk prediction as it contains many fields, 
+            // but we could implement a shallow comparison here if needed.
+            setRiskPrediction(newPrediction);
+
             if (crashAction === "ESCALATE") {
-                setLastAlert({
+                triggerAlert({
                     type: "CRASH_RISK_ESCALATE",
                     severity: "critical",
                     riskType: "CRASH",
@@ -681,7 +711,12 @@ export function SensorProvider({ children }) {
         } catch (error) {
             console.warn("Failed to send sensor batch:", error.message);
         }
-    }, [token, user, locationData, router]);
+    }, [token, user, router]); // Removed locationData dependency to avoid constant recreation
+
+    // Keep the ref up to date
+    useEffect(() => {
+        sendSensorBatchRef.current = sendSensorBatch;
+    }, [sendSensorBatch]);
 
     // Allows the app to periodically provide a camera frame for real-time fatigue analysis
     const updateCameraFrame = useCallback((base64Frame) => {
@@ -724,15 +759,11 @@ export function SensorProvider({ children }) {
         console.log('[SensorContext] isMonitoring updated to:', isMonitoring);
     }, [isMonitoring]);
 
-    // Don't use useMemo - it can cause stale value issues
-    const value = {
+    // Memoize the status/status context value (stable)
+    const statusValue = useMemo(() => ({
         isMonitoring,
         isOnline,
         sessionId,
-        currentSpeed,
-        accelerometerData,
-        gyroscopeData,
-        locationData,
         batteryLevel,
         networkStrength,
         cameraActive,
@@ -748,21 +779,57 @@ export function SensorProvider({ children }) {
         startBreak,
         endBreak,
         updateCameraFrame,
-    };
+    }), [
+        isMonitoring,
+        isOnline,
+        sessionId,
+        batteryLevel,
+        networkStrength,
+        cameraActive,
+        lastAlert,
+        safetyScore,
+        riskPrediction,
+        startMonitoring,
+        stopMonitoring,
+        toggleOnline,
+        isOnBreak,
+        breakDuration,
+        startBreak,
+        endBreak,
+        updateCameraFrame,
+    ]);
+
+    // Memoize the data context value (frequent updates)
+    const dataValue = useMemo(() => ({
+        currentSpeed,
+        locationData,
+        accelerometerData: accelerometerDataRef.current,
+        gyroscopeData: gyroscopeDataRef.current,
+    }), [currentSpeed, locationData]);
 
     return (
-        <SensorContext.Provider value={value}>
-            {children}
-        </SensorContext.Provider>
+        <SensorStatusContext.Provider value={statusValue}>
+            <SensorDataContext.Provider value={dataValue}>
+                {children}
+            </SensorDataContext.Provider>
+        </SensorStatusContext.Provider>
     );
 }
 
 export function useSensors() {
-    const context = useContext(SensorContext);
+    const context = useContext(SensorStatusContext);
     if (!context) {
         throw new Error("useSensors must be used within a SensorProvider");
     }
     return context;
 }
 
-export default SensorContext;
+export function useSensorData() {
+    const context = useContext(SensorDataContext);
+    if (!context) {
+        throw new Error("useSensorData must be used within a SensorProvider");
+    }
+    return context;
+}
+
+export default SensorStatusContext;

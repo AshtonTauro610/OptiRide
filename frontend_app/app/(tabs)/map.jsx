@@ -1,6 +1,6 @@
 import { useTheme } from "@/contexts/ThemeContext";
 import { useOrders } from "@/contexts/OrdersContext";
-import { useSensors } from "@/contexts/SensorContext";
+import { useSensors, useSensorData } from "@/contexts/SensorContext";
 import { useRouter } from "expo-router";
 import { Bell, User, Navigation, Gauge, RotateCw, ChevronDown, ChevronUp, MapPin, CheckCircle2 } from "lucide-react-native";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
@@ -37,9 +37,9 @@ export default function MapScreen() {
   const { isDarkMode } = useTheme();
   const router = useRouter();
   const { orders } = useOrders();
-  const { currentSpeed, gyroscopeData, isMonitoring, locationData, startMonitoring } = useSensors();
+  const { isMonitoring, startMonitoring } = useSensors();
+  const { currentSpeed, gyroscopeData, locationData } = useSensorData();
   const { navigationTarget, clearNavigationTarget } = useAllocationNotification();
-
   const [userLocation, setUserLocation] = useState(null);
   const [zoneRouteData, setZoneRouteData] = useState(null);
   const [isLoadingLocation, setIsLoadingLocation] = useState(true);
