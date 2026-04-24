@@ -1,6 +1,6 @@
-# Optiride
+# OptiRide
 
-Optiride is a comprehensive fleet management and driver safety monitoring system. It leverages AI-driven demand forecasting, real-time safety monitoring, and dynamic order allocation to optimize delivery operations and ensure driver well-being.
+OptiRide is a comprehensive fleet management and driver safety monitoring system. It leverages AI-driven demand forecasting, real-time safety monitoring, and dynamic order allocation to optimize delivery operations and ensure driver well-being.
 
 ## 🏗️ System Architecture
 
